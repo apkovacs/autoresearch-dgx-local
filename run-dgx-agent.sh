@@ -161,8 +161,10 @@ echo "  Model:       $OLLAMA_MODEL"
 echo "  Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
 echo ""
 
-# Pre-configure git safe.directory (avoids permission prompts inside Claude Code)
+# Pre-configure git (avoids permission prompts and identity errors inside Claude Code)
 git config --global --add safe.directory /workspace
+git config --global user.email "agent@autoresearch.local"
+git config --global user.name "AutoResearch Agent"
 
 # Configure Claude Code permissions for autonomous operation
 # Scoped to the experiment: agent can only edit train.py, run training,
@@ -282,21 +284,29 @@ Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
 
 ## Experiment loop — follow this EXACTLY
 
-1. Edit train.py with your experimental idea
-2. \`git add train.py && git commit -m "description of change"\`
+For EVERY experiment (including the baseline), do ALL of these steps:
+
+1. Edit train.py with your experimental idea (skip for baseline)
+2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
 3. \`bash run_experiment.sh\`
 4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-5. **Log the result to results.tsv** — append a tab-separated row:
-   \`echo -e "COMMIT\tVAL_BPB\tMEMORY_GB\tSTATUS\tDESCRIPTION" >> results.tsv\`
-   (replace COMMIT with the 7-char git hash, fill in actual values)
-6. If val_bpb IMPROVED (lower): keep the commit, move on
-7. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+5. Get the commit hash: \`git rev-parse --short HEAD\`
+6. **Log the result to results.tsv NOW** — run this command:
+   \`printf "%s\t%s\t%s\t%s\t%s\n" "COMMIT" "VAL_BPB" "MEM_GB" "STATUS" "DESCRIPTION" >> results.tsv\`
+   (replace the placeholder values with actuals, e.g.:)
+   \`printf "%s\t%s\t%s\t%s\t%s\n" "a1b2c3d" "1.879972" "7.6" "keep" "baseline" >> results.tsv\`
+7. If val_bpb IMPROVED (lower): keep the commit, move on
+8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-**You MUST update results.tsv after every experiment.** This is how results are tracked.
-**You MUST use git reset --hard HEAD~1 to revert failed experiments.** Do not manually undo code changes.
+**AFTER EVERY EXPERIMENT you MUST run the printf command in step 6 to log to results.tsv.**
+**To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
+Do not manually undo code changes. Do not use python3 -c to edit files.
 
 ## Start now
-Read train.py, then run the baseline: \`bash run_experiment.sh\`
+1. Read train.py
+2. Run the baseline: \`bash run_experiment.sh\`
+3. Log the baseline to results.tsv (step 6 above)
+4. Begin experimenting
 CLAUDEMD
 
 echo ""
