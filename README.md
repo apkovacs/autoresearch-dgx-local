@@ -116,12 +116,15 @@ run-dgx.sh                 -- Docker launcher: training only
 run-dgx-agent.sh           -- Docker launcher: autonomous agent (single branch)
 run-dgx-game.sh            -- Docker launcher: meta-research orchestrator
 monitor-dgx.sh             -- real-time container monitoring
+monitor-game.sh            -- live game dashboard, event stream, transcript viewer
 
 orchestrator.py             -- game engine: schedules branches, migration, adoption
 hyperparams.py              -- hyperparameter extraction/injection for cross-branch migration
 leaderboard.py              -- cross-branch results tracking
+event_log.py                -- structured event logging (JSON lines)
 game_config.yaml            -- game configuration (mode, branches, strategy params)
 branch_templates/           -- prompt templates for bounded experiment rounds
+logs/                       -- event log + per-round agent transcripts (gitignored)
 
 DGX_SPARK_README.md         -- overview of DGX Spark changes
 DGX_QUICKSTART.md           -- quick start guide

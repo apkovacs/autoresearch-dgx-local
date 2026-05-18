@@ -27,10 +27,17 @@ from leaderboard import (
     get_improvement_rate, update_leaderboard, print_leaderboard, get_global_best,
     RESULTS_DIR,
 )
+from event_log import (
+    log_orchestrator_start, log_round_start, log_round_end,
+    log_branch_start, log_branch_progress, log_branch_end,
+    log_migration, log_adoption, log_meta_agent, log_leaderboard, log_error,
+    LOGS_DIR,
+)
 
 CONFIG_PATH = "game_config.yaml"
 BOUNDED_TEMPLATE = "branch_templates/bounded.md"
 AGENT_PROMPT_FILE = "_round_prompt.md"
+TRANSCRIPTS_DIR = os.path.join(LOGS_DIR, "transcripts")
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +139,15 @@ def render_prompt(max_experiments, focus_description):
 def run_branch_round(config, branch_name_short, num_experiments, focus):
     mode = config["mode"]
     tag = config["tag"]
+    round_num = config["state"]["current_round"] + 1
     bname = branch_name(mode, branch_name_short, tag)
     timeout = config.get("round_timeout_minutes", 60) * 60
 
     print(f"\n--- Round: {branch_name_short} ({num_experiments} experiments) ---")
     print(f"  Branch: {bname}")
     print(f"  Focus: {focus}")
+
+    log_branch_start(branch_name_short, round_num, num_experiments, focus)
 
     subprocess.run(["git", "checkout", bname], check=True,
                    capture_output=True, text=True)
@@ -149,8 +159,17 @@ def run_branch_round(config, branch_name_short, num_experiments, focus):
     initial_count = count_results_lines()
     target_count = initial_count + num_experiments
 
-    cmd = f'claude --print "$(cat {AGENT_PROMPT_FILE})"'
-    proc = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
+    # Capture agent transcript to a per-round JSON stream file
+    os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+    transcript_path = os.path.join(
+        TRANSCRIPTS_DIR,
+        f"r{round_num:03d}_{branch_name_short}.jsonl"
+    )
+    transcript_file = open(transcript_path, "w")
+
+    cmd = f'claude -p --output-format stream-json "$(cat {AGENT_PROMPT_FILE})"'
+    proc = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid,
+                            stdout=transcript_file, stderr=subprocess.STDOUT)
 
     start = time.time()
     try:
@@ -158,13 +177,18 @@ def run_branch_round(config, branch_name_short, num_experiments, focus):
             time.sleep(30)
             current = count_results_lines()
             elapsed = time.time() - start
-            print(f"  [{elapsed/60:.0f}m] Experiments: {current - initial_count}/{num_experiments}")
+            completed = current - initial_count
+            print(f"  [{elapsed/60:.0f}m] Experiments: {completed}/{num_experiments}")
+            log_branch_progress(branch_name_short, round_num, completed,
+                                num_experiments, elapsed)
 
             if current >= target_count:
-                print(f"  Round complete ({current - initial_count} experiments)")
+                print(f"  Round complete ({completed} experiments)")
                 break
             if elapsed > timeout:
                 print(f"  Round timeout ({timeout/60:.0f}m)")
+                log_error("branch_timeout", branch=branch_name_short,
+                          round=round_num, elapsed_s=elapsed)
                 break
     finally:
         try:
@@ -175,12 +199,17 @@ def run_branch_round(config, branch_name_short, num_experiments, focus):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        transcript_file.close()
 
     if os.path.exists(AGENT_PROMPT_FILE):
         os.remove(AGENT_PROMPT_FILE)
 
     final_count = count_results_lines()
-    print(f"  Completed: {final_count - initial_count} experiments")
+    completed = final_count - initial_count
+    duration = time.time() - start
+    print(f"  Completed: {completed} experiments")
+    print(f"  Transcript: {transcript_path}")
+    log_branch_end(branch_name_short, round_num, completed, duration)
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +301,7 @@ def run_island_migration(config):
             check=True, capture_output=True, text=True
         )
         print(f"  Migration: {source} → {dest}: {param_names}")
+        log_migration(source, dest, migrate_params.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +417,7 @@ def run_coopetition_adoption(config):
         check=True, capture_output=True, text=True
     )
     print(f"  Adoption: {loser} adopted {param_names} from {winner}")
+    log_adoption(winner, loser, adopt_params.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +493,14 @@ Or respond with "no changes" if the current settings are working well.
             updates = yaml.safe_load(response)
             if isinstance(updates, dict):
                 mode_config = config.get(mode, {})
+                applied = {}
                 for key, value in updates.items():
                     if key in mode_config:
                         print(f"  Updating {mode}.{key}: {mode_config[key]} → {value}")
                         mode_config[key] = value
+                        applied[key] = value
+                if applied:
+                    log_meta_agent(applied)
         except yaml.YAMLError:
             print("  Meta-agent: could not parse response as YAML, skipping")
 
@@ -520,11 +555,15 @@ def main():
         run_base_mode(config)
         return
 
+    log_orchestrator_start(mode, config["tag"], args.config)
+
     print(f"\nSetting up branches...")
     setup_branches(config)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     print(f"\nStarting game loop (Ctrl+C to stop)...")
+    print(f"  Event log:    logs/events.jsonl")
+    print(f"  Transcripts:  logs/transcripts/")
 
     try:
         while True:
@@ -534,6 +573,8 @@ def main():
             print(f"{'='*70}")
 
             schedule = compute_schedule(config, round_num)
+            round_start_time = time.time()
+            log_round_start(round_num, schedule)
 
             prev_bpbs = {}
             for b in get_branch_list(config):
@@ -571,6 +612,10 @@ def main():
             config["state"]["current_round"] = round_num
             save_config(config)
             print_leaderboard(config)
+
+            log_round_end(round_num, time.time() - round_start_time)
+            gb, gbpb = get_global_best(config)
+            log_leaderboard(config["state"].get("leaderboard", {}), gb, gbpb)
 
     except KeyboardInterrupt:
         print("\n\nOrchestrator stopped by user.")
