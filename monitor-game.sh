@@ -75,10 +75,17 @@ run_cmd() {
     fi
 }
 
-# --- Transcript formatter uses stream_formatter.py (no file arg = display only) ---
-# Resolves path relative to this script's location
+# --- Locate stream_formatter.py ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FORMATTER="$SCRIPT_DIR/stream_formatter.py"
+if [ -f "$SCRIPT_DIR/stream_formatter.py" ]; then
+    FORMATTER="$SCRIPT_DIR/stream_formatter.py"
+elif [ -f "/workspace/stream_formatter.py" ]; then
+    FORMATTER="/workspace/stream_formatter.py"
+elif [ -f "stream_formatter.py" ]; then
+    FORMATTER="stream_formatter.py"
+else
+    FORMATTER=""
+fi
 
 # --- Find latest transcript ---
 find_latest_transcript() {
@@ -141,7 +148,12 @@ if [ "$MODE" = "transcript" ]; then
     echo "Following: $LATEST"
     echo "  Showing: thinking | tool calls | agent responses"
     echo "---"
-    run_cmd "tail -f $LATEST" | python3 "$FORMATTER"
+    if [ -n "$FORMATTER" ]; then
+        run_cmd "tail -f $LATEST" | python3 "$FORMATTER"
+    else
+        echo "(stream_formatter.py not found — showing raw JSON)"
+        run_cmd "tail -f $LATEST"
+    fi
     exit 0
 fi
 
