@@ -21,3 +21,6 @@ dev/
 
 # Results file
 results.tsv
+
+# Orchestrator logs (event log + agent transcripts)
+logs/
