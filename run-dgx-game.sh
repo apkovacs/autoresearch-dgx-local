@@ -181,6 +181,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Write(/workspace/run.log)",
       "Write(run.log)",
       "Bash(ls /cache/*)",
+      "Bash(bash run_experiment.sh*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -222,13 +223,26 @@ ln -sfn /cache/autoresearch /root/.cache/autoresearch 2>/dev/null || true
 echo "=== Preparing training data ==="
 python prepare.py --num-shards 10
 
+# Create experiment runner script
+cat > /workspace/run_experiment.sh << 'RUNEXP'
+#!/usr/bin/env bash
+python train.py > run.log 2>&1
+exit_code=$?
+echo "=== Experiment finished (exit code: $exit_code) ==="
+grep "^val_bpb:\|^peak_vram_mb:\|^training_seconds:" run.log 2>/dev/null || echo "(no metrics found — check run.log for errors)"
+exit $exit_code
+RUNEXP
+chmod +x /workspace/run_experiment.sh
+
 # Write CLAUDE.md so the agent knows the environment is ready
 cat > /workspace/CLAUDE.md << 'CLAUDEMD'
 # Environment Notes — READ THIS FIRST
 
 ## IMPORTANT: Command differences from program.md
+- Use `bash run_experiment.sh` to run experiments (NOT `python train.py > run.log 2>&1`)
+  This wrapper captures output to run.log and prints key metrics when done.
+- Do NOT use output redirection (`>`) in bash commands — it is blocked by the sandbox.
 - Use `python train.py` instead of `uv run train.py` (there is no uv in this environment)
-- Use `python train.py > run.log 2>&1` to run experiments
 - Data is already prepared — do NOT run prepare.py
 - The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch)
 
