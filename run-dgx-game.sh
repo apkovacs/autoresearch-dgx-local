@@ -125,6 +125,7 @@ pip install -q rustbpe huggingface_hub tiktoken pyarrow requests pyyaml
 # 2. Install Ollama
 echo "[2/5] Installing Ollama..."
 if ! command -v ollama &>/dev/null; then
+    apt-get update -qq && apt-get install -y -qq zstd >/dev/null 2>&1
     curl -fsSL https://ollama.com/install.sh | sh
 fi
 
