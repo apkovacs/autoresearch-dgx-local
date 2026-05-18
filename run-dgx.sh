@@ -101,12 +101,12 @@ case "$MODE" in
     interactive)
         echo "Starting interactive training container..."
         docker run -it "${DOCKER_ARGS[@]}" "$DOCKER_IMAGE" \
-            bash -c "pip install -q rustbpe huggingface_hub tiktoken pyarrow requests && python prepare.py --num-shards 10 && uv run train.py"
+            bash -c "pip install -q rustbpe huggingface_hub tiktoken pyarrow requests && python prepare.py --num-shards 10 && python train.py"
         ;;
     detached)
         echo "Starting detached training container..."
         docker run -d "${DOCKER_ARGS[@]}" "$DOCKER_IMAGE" \
-            bash -c "pip install -q rustbpe huggingface_hub tiktoken pyarrow requests && python prepare.py --num-shards 10 && uv run train.py"
+            bash -c "pip install -q rustbpe huggingface_hub tiktoken pyarrow requests && python prepare.py --num-shards 10 && python train.py"
         echo "Container started. Monitor with: bash monitor-dgx.sh"
         ;;
     test)
