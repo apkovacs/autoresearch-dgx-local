@@ -168,6 +168,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Read(/workspace/*)",
       "Read(/cache/autoresearch/*)",
       "Write(/workspace/results.tsv)",
+      "Write(results.tsv)",
+      "Write(/workspace/run.log)",
+      "Write(run.log)",
       "Bash(ls /cache/*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
@@ -210,21 +213,49 @@ ln -sfn /cache/autoresearch /root/.cache/autoresearch 2>/dev/null || true
 echo "=== Preparing training data ==="
 python prepare.py --num-shards 10
 
+# Pre-create experiment branch and results.tsv so agent can skip setup
+RUN_TAG=$(date +%b%d | tr '[:upper:]' '[:lower:]')
+BRANCH_NAME="autoresearch/$RUN_TAG"
+cd /workspace
+git config --global --add safe.directory /workspace
+if ! git rev-parse --verify "$BRANCH_NAME" &>/dev/null; then
+    echo "Creating experiment branch: $BRANCH_NAME"
+    git checkout -b "$BRANCH_NAME"
+else
+    echo "Switching to existing branch: $BRANCH_NAME"
+    git checkout "$BRANCH_NAME"
+fi
+
+# Initialize results.tsv if it doesn't exist
+if [ ! -f results.tsv ]; then
+    printf 'commit\tval_bpb\tmemory_gb\tstatus\tdescription\n' > results.tsv
+    echo "Created results.tsv with header"
+fi
+
 # Write CLAUDE.md so the agent knows the environment is ready
-cat > /workspace/CLAUDE.md << 'CLAUDEMD'
-# Environment Notes
+# This overrides the Setup section of program.md
+cat > /workspace/CLAUDE.md << CLAUDEMD
+# Environment Notes — READ THIS FIRST
 
-## Data is pre-prepared
-Training data and tokenizer are already downloaded and ready.
-You do NOT need to run prepare.py or check for data — it has already been done.
-The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch).
+## Setup is ALREADY DONE — skip to experimenting
+- Branch: $BRANCH_NAME (already checked out)
+- Data: pre-downloaded at /cache/autoresearch (symlinked to ~/.cache/autoresearch)
+- Tokenizer: pre-trained
+- results.tsv: created with header row
 
-## How to run an experiment
-Just run: python train.py
-The data path is configured via AUTORESEARCH_CACHE_DIR environment variable.
+Do NOT run the Setup section of program.md. Go directly to the Experimentation loop.
+
+## IMPORTANT: Command differences from program.md
+- Use \`python train.py\` instead of \`uv run train.py\` (there is no uv in this environment)
+- Use \`python train.py > run.log 2>&1\` to run experiments
+- Data is already prepared — do NOT run prepare.py
 
 ## What you can modify
-Only train.py — this is the single file you should edit. Do not modify prepare.py or any other files.
+Only train.py — this is the single file you should edit.
+
+## Start now
+Read train.py, then run the baseline: \`python train.py > run.log 2>&1\`
+Then begin the experiment loop from program.md.
 CLAUDEMD
 
 echo ""

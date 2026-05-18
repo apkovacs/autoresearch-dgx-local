@@ -177,6 +177,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Read(/workspace/*)",
       "Read(/cache/autoresearch/*)",
       "Write(/workspace/results.tsv)",
+      "Write(results.tsv)",
+      "Write(/workspace/run.log)",
+      "Write(run.log)",
       "Bash(ls /cache/*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
@@ -221,19 +224,16 @@ python prepare.py --num-shards 10
 
 # Write CLAUDE.md so the agent knows the environment is ready
 cat > /workspace/CLAUDE.md << 'CLAUDEMD'
-# Environment Notes
+# Environment Notes — READ THIS FIRST
 
-## Data is pre-prepared
-Training data and tokenizer are already downloaded and ready.
-You do NOT need to run prepare.py or check for data — it has already been done.
-The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch).
-
-## How to run an experiment
-Just run: python train.py
-The data path is configured via AUTORESEARCH_CACHE_DIR environment variable.
+## IMPORTANT: Command differences from program.md
+- Use `python train.py` instead of `uv run train.py` (there is no uv in this environment)
+- Use `python train.py > run.log 2>&1` to run experiments
+- Data is already prepared — do NOT run prepare.py
+- The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch)
 
 ## What you can modify
-Only train.py — this is the single file you should edit. Do not modify prepare.py or any other files.
+Only train.py — this is the single file you should edit.
 CLAUDEMD
 
 echo ""
