@@ -1,86 +1,164 @@
-# autoresearch
+# autoresearch-dgx
+
+A fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) adapted for the NVIDIA DGX Spark, with persistent storage, local LLM agent support, and a game-theory-inspired meta-research orchestration framework.
 
 ![teaser](progress.png)
 
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+## What's different from upstream
 
-## How it works
+This fork targets the **NVIDIA DGX Spark** (GB10 Blackwell GPU, 128 GB unified LPDDR5X, ARM64 Grace CPU) and adds three major capabilities on top of the original autoresearch:
 
-The repo is deliberately kept small and only really has three files that matter:
+1. **DGX Spark adaptation** -- SDPA fallback for flash-attn3, reduced hyperparameters, Docker containerization with OOM protection and persistent shard storage
+2. **Local LLM agent** -- Ollama + Claude Code running entirely on-device, configurable model (default: Qwen3.6 27B)
+3. **Meta-research orchestration** -- Game-theory-inspired strategies (island model, multi-armed bandit, iterated coopetition) that manage multiple competing/cooperating research branches on a single GPU
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+Inspired in part by [David-Barnes-Data-Imaginations/autoresearch-DGX-Spark](https://github.com/David-Barnes-Data-Imaginations/autoresearch-DGX-Spark).
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+## Architecture
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+```
+Layer 3: Meta-Agent (optional)  -->  tunes game parameters
+Layer 2: Orchestrator           -->  manages branches, strategies, migration
+Layer 1: Research Agent         -->  modifies train.py, runs experiments
+Layer 0: Training               -->  PyTorch training loop (train.py)
+```
+
+Each layer is independently useful. You can run just the training loop, add the research agent, or enable the full orchestrator with multiple branches and optional meta-agent.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+### Training only
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+git clone https://github.com/apkovacs/autoresearch-dgx.git
+cd autoresearch-dgx
+git checkout dgx-spark
+bash run-dgx.sh
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+### Autonomous agent (single branch)
 
-## Running the agent
-
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
-
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+```bash
+bash run-dgx-agent.sh
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+This starts Ollama with Qwen3.6 27B, installs Claude Code, and begins the experiment loop defined in `program.md`.
+
+### Multi-branch game strategies
+
+```bash
+# Island Model -- 3 branches with migration
+bash run-dgx-game.sh --mode island
+
+# Multi-Armed Bandit -- UCB1 arm selection
+bash run-dgx-game.sh --mode bandit
+
+# Iterated Coopetition -- 2 branches, forced adoption
+bash run-dgx-game.sh --mode coopetition
+```
+
+See [DGX_QUICKSTART.md](DGX_QUICKSTART.md) for full setup instructions and [GAME_STRATEGIES.md](GAME_STRATEGIES.md) for strategy details.
+
+## How it works
+
+The core idea is unchanged from upstream: give an AI agent a small but real LLM training setup and let it experiment autonomously. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You are programming the `program.md` Markdown files that provide context to the AI agents, not touching the Python files directly.
+
+The metric is **val_bpb** (validation bits per byte) -- lower is better, and vocab-size-independent so architectural changes are fairly compared.
+
+### Game strategies
+
+The orchestrator adds a meta-research layer that manages multiple research branches:
+
+| Mode | Branches | Mechanism | Best for |
+|---|---|---|---|
+| **Base** | 1 | Original autoresearch loop | Baseline, simple experiments |
+| **Island** | 3+ | Independent evolution with periodic migration | Broad exploration across optimization axes |
+| **Bandit** | 2+ | UCB1 selects which strategy gets compute | Discovering which direction yields most improvement |
+| **Coopetition** | 2 | Head-to-head with forced adoption by loser | Focused comparison with knowledge transfer |
+
+### Local LLM support
+
+The agent runs entirely on-device using Ollama. Tested models:
+
+| Model | VRAM headroom | Notes |
+|---|---|---|
+| Qwen3.6 27B (default) | Moderate | Strong reasoning, good default |
+| Gemma 4 27B | Moderate | Competitive alternative |
+| Gemma 4 12B | High | More memory for training |
+| Qwen 2.5 Coder 14B | High | Code-specialized |
+
+Switch models with:
+```bash
+OLLAMA_MODEL=gemma4:27b bash run-dgx-agent.sh
+```
+
+## DGX Spark adaptations
+
+Key changes from the upstream H100 configuration:
+
+- **SDPA fallback** for flash-attn3 (no ARM64 builds available)
+- **Reduced hyperparameters**: `DEPTH=4`, `TOTAL_BATCH_SIZE=2^16`, `DEVICE_BATCH_SIZE=8`
+- **MFU constant**: 209 TFLOPS BF16 (GB10 Blackwell, replacing H100's 989 TFLOPS)
+- **OOM protection**: `--oom-score-adj 1000` prevents GPU memory pressure from freezing the host (unified memory architecture)
+- **Persistent storage**: Training shards and Ollama model weights survive container restarts via Docker volume mounts
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+train.py                    -- model, optimizer, training loop (agent modifies this)
+prepare.py                  -- constants, data prep + runtime utilities
+program.md                  -- agent instructions (human modifies this)
+pyproject.toml              -- dependencies
+
+run-dgx.sh                 -- Docker launcher: training only
+run-dgx-agent.sh           -- Docker launcher: autonomous agent (single branch)
+run-dgx-game.sh            -- Docker launcher: meta-research orchestrator
+monitor-dgx.sh             -- real-time container monitoring
+
+orchestrator.py             -- game engine: schedules branches, migration, adoption
+hyperparams.py              -- hyperparameter extraction/injection for cross-branch migration
+leaderboard.py              -- cross-branch results tracking
+game_config.yaml            -- game configuration (mode, branches, strategy params)
+branch_templates/           -- prompt templates for bounded experiment rounds
+
+DGX_SPARK_README.md         -- overview of DGX Spark changes
+DGX_QUICKSTART.md           -- quick start guide
+DGX_SETUP.md                -- detailed setup, persistent storage, model selection
+DGX_TROUBLESHOOTING.md      -- common issues and fixes
+GAME_STRATEGIES.md          -- strategy documentation with tuning tips
 ```
 
 ## Design choices
 
+Inherited from upstream:
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+- **Fixed time budget.** Training always runs for exactly 5 minutes of wall clock time, making experiments directly comparable regardless of what the agent changes.
+- **Self-contained.** No external dependencies beyond PyTorch and a few small packages.
 
-## Platform support
+Added in this fork:
+- **Docker-first.** All execution happens inside containers with pinned images (`nvcr.io/nvidia/pytorch:25.12-py3`), ensuring reproducibility.
+- **Persistent by default.** Training shards and model weights are cached on the host, surviving container restarts.
+- **Strategies are deterministic.** The orchestrator (branch scheduling, migration, adoption) is plain Python with no LLM calls. Only the research agent and optional meta-agent use the LLM.
+- **Git branches as isolation.** Each research branch is a real git branch, making it easy to inspect, compare, and cherry-pick results.
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+## Documentation
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+| Document | Description |
+|---|---|
+| [DGX_QUICKSTART.md](DGX_QUICKSTART.md) | Get running in under 5 minutes |
+| [DGX_SETUP.md](DGX_SETUP.md) | Persistent storage, model selection, parameter tuning |
+| [DGX_TROUBLESHOOTING.md](DGX_TROUBLESHOOTING.md) | Common issues and fixes |
+| [DGX_SPARK_README.md](DGX_SPARK_README.md) | What changed from upstream and why |
+| [GAME_STRATEGIES.md](GAME_STRATEGIES.md) | Strategy details, math, and tuning tips |
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+## Attribution
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+- Original project: [karpathy/autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy
+- DGX Spark inspiration: [David-Barnes-Data-Imaginations/autoresearch-DGX-Spark](https://github.com/David-Barnes-Data-Imaginations/autoresearch-DGX-Spark) by David Barnes
 
-## Notable forks
+## Notable forks (upstream)
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
 - [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
