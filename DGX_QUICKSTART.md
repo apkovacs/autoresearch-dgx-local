@@ -11,7 +11,7 @@
 Run a single training experiment:
 
 ```bash
-git clone https://github.com/apkovacs/autoresearch.git
+git clone https://github.com/apkovacs/autoresearch-dgx.git
 cd autoresearch
 git checkout dgx-spark
 bash run-dgx.sh
@@ -30,7 +30,7 @@ bash monitor-dgx.sh
 Run the autonomous experiment loop with a local LLM (no external APIs):
 
 ```bash
-git clone https://github.com/apkovacs/autoresearch.git
+git clone https://github.com/apkovacs/autoresearch-dgx.git
 cd autoresearch
 git checkout dgx-spark
 bash run-dgx-agent.sh
