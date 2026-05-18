@@ -75,109 +75,10 @@ run_cmd() {
     fi
 }
 
-# --- Transcript formatter (stream-json -> human-readable) ---
-TRANSCRIPT_FORMATTER='
-import sys, json
-
-BLUE = "\033[34m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-CYAN = "\033[36m"
-DIM = "\033[2m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
-
-def wrap_text(text, width=100, indent="  "):
-    """Simple word wrap."""
-    words = text.split()
-    lines = []
-    current = indent
-    for w in words:
-        if len(current) + len(w) + 1 > width:
-            lines.append(current)
-            current = indent + w
-        else:
-            current = current + " " + w if current.strip() else indent + w
-    if current.strip():
-        lines.append(current)
-    return "\n".join(lines)
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        event = json.loads(line)
-    except json.JSONDecodeError:
-        # Non-JSON line (e.g. stderr), print as-is
-        print(f"{DIM}{line}{RESET}")
-        continue
-
-    etype = event.get("type", "")
-
-    # --- Assistant text ---
-    if etype == "assistant":
-        msg = event.get("message", {})
-        for block in msg.get("content", []):
-            btype = block.get("type", "")
-
-            if btype == "thinking":
-                text = block.get("thinking", "")
-                if text:
-                    print(f"\n{DIM}{CYAN}[thinking]{RESET}")
-                    print(f"{DIM}{wrap_text(text)}{RESET}")
-
-            elif btype == "text":
-                text = block.get("text", "")
-                if text:
-                    print(f"\n{GREEN}{BOLD}[agent]{RESET}")
-                    print(wrap_text(text))
-
-            elif btype == "tool_use":
-                name = block.get("name", "?")
-                inp = block.get("input", {})
-                # Compact tool call display
-                if name == "Bash":
-                    cmd = inp.get("command", "")
-                    print(f"\n{YELLOW}[tool: {name}]{RESET} {cmd[:120]}")
-                elif name == "Read":
-                    print(f"\n{YELLOW}[tool: {name}]{RESET} {inp.get('file_path', '')}")
-                elif name == "Edit":
-                    print(f"\n{YELLOW}[tool: {name}]{RESET} {inp.get('file_path', '')}")
-                elif name == "Write":
-                    print(f"\n{YELLOW}[tool: {name}]{RESET} {inp.get('file_path', '')}")
-                else:
-                    compact = json.dumps(inp, default=str)
-                    if len(compact) > 120:
-                        compact = compact[:117] + "..."
-                    print(f"\n{YELLOW}[tool: {name}]{RESET} {compact}")
-
-    # --- Tool results (surface training progress lines) ---
-    elif etype == "result":
-        import re
-        TRAINING_RE = [re.compile(p) for p in [
-            r"step\s+\d+", r"val_bpb", r"tokens/sec", r"MFU",
-            r"loss[\s=:]", r"training time", r"compil",
-        ]]
-        content = event.get("result", "")
-        if isinstance(content, str) and content:
-            lines_out = content.split("\n")
-            training_lines = [l for l in lines_out if any(p.search(l) for p in TRAINING_RE)]
-            other_lines = [l for l in lines_out if l.strip() and not any(p.search(l) for p in TRAINING_RE)]
-            for l in training_lines:
-                print(f"  {l}")
-            if not training_lines and other_lines:
-                preview = "\n  ".join(other_lines[:3])
-                if len(other_lines) > 3:
-                    preview += f"\n  {DIM}... ({len(other_lines) - 3} more lines){RESET}"
-                print(f"{DIM}  {preview}{RESET}")
-
-    # --- System / other ---
-    elif etype == "system":
-        msg = event.get("message", "")
-        if msg:
-            print(f"\n{BLUE}[system]{RESET} {msg}")
-'
+# --- Transcript formatter uses stream_formatter.py (no file arg = display only) ---
+# Resolves path relative to this script's location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FORMATTER="$SCRIPT_DIR/stream_formatter.py"
 
 # --- Find latest transcript ---
 find_latest_transcript() {
@@ -240,7 +141,7 @@ if [ "$MODE" = "transcript" ]; then
     echo "Following: $LATEST"
     echo "  Showing: thinking | tool calls | agent responses"
     echo "---"
-    run_cmd "tail -f $LATEST" | python3 -c "$TRANSCRIPT_FORMATTER"
+    run_cmd "tail -f $LATEST" | python3 "$FORMATTER"
     exit 0
 fi
 
