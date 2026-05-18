@@ -192,6 +192,8 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git checkout *)",
       "Bash(git branch*)",
       "Bash(git stash*)",
+      "Bash(git switch*)",
+      "Bash(git restore*)",
       "Bash(git rev-parse*)",
       "Bash(grep *)",
       "Bash(diff *)",
