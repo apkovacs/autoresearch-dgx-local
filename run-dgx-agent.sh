@@ -189,6 +189,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git stash*)",
       "Bash(git switch*)",
       "Bash(git restore*)",
+      "Bash(git reset*)",
       "Bash(git rev-parse*)",
       "Bash(grep *)",
       "Bash(diff *)",
@@ -268,10 +269,25 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 
 ## What you can modify
 Only train.py — this is the single file you should edit.
+Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
+
+## Experiment loop — follow this EXACTLY
+
+1. Edit train.py with your experimental idea
+2. \`git add train.py && git commit -m "description of change"\`
+3. \`bash run_experiment.sh\`
+4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+5. **Log the result to results.tsv** — append a tab-separated row:
+   \`echo -e "COMMIT\tVAL_BPB\tMEMORY_GB\tSTATUS\tDESCRIPTION" >> results.tsv\`
+   (replace COMMIT with the 7-char git hash, fill in actual values)
+6. If val_bpb IMPROVED (lower): keep the commit, move on
+7. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+
+**You MUST update results.tsv after every experiment.** This is how results are tracked.
+**You MUST use git reset --hard HEAD~1 to revert failed experiments.** Do not manually undo code changes.
 
 ## Start now
 Read train.py, then run the baseline: \`bash run_experiment.sh\`
-Then begin the experiment loop from program.md.
 CLAUDEMD
 
 echo ""

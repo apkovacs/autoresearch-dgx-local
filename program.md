@@ -91,17 +91,19 @@ d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
 
-LOOP FOREVER:
+LOOP FOREVER — follow these steps EXACTLY for each experiment:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+1. Edit `train.py` with your experimental idea (use the Edit tool, NOT python3 -c)
+2. `git add train.py && git commit -m "description of change"`
+3. Run: `bash run_experiment.sh`
+4. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+5. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it after a few tries, give up.
+6. **MANDATORY — Log the result to results.tsv** by appending a tab-separated row:
+   `echo -e "COMMIT\tVAL_BPB\tMEMORY_GB\tSTATUS\tDESCRIPTION" >> results.tsv`
+   Replace COMMIT with the 7-char git hash, fill in actual values. Do NOT skip this step.
+   (Do not commit results.tsv — leave it untracked by git)
+7. If val_bpb IMPROVED (lower): keep the commit, move on
+8. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
