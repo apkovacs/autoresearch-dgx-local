@@ -162,8 +162,36 @@ echo "  The agent will read program.md and begin the experiment loop."
 echo "  Press Ctrl+C to stop."
 echo ""
 
-# Launch Claude Code with program.md
-claude --print "$(cat program.md)"
+# Set up logging directories
+mkdir -p logs/transcripts
+
+# Write initial event to event log
+python3 -c "
+import json, time
+from datetime import datetime, timezone
+event = {
+    'ts': datetime.now(timezone.utc).isoformat(),
+    'elapsed_s': time.monotonic(),
+    'event': 'orchestrator_start',
+    'mode': 'base',
+    'tag': 'agent',
+    'config': 'run-dgx-agent.sh',
+}
+with open('logs/events.jsonl', 'a') as f:
+    f.write(json.dumps(event) + '\n')
+"
+
+echo "  Event log:    logs/events.jsonl"
+echo "  Transcript:   logs/transcripts/agent.jsonl"
+echo ""
+echo "  Monitor in another terminal:"
+echo "    bash monitor-game.sh --transcript   (agent thinking + tool calls)"
+echo "    bash monitor-game.sh --events       (event stream)"
+echo ""
+
+# Launch Claude Code with stream-json output, capturing transcript
+claude -p --output-format stream-json "$(cat program.md)" \
+    > >(tee logs/transcripts/agent.jsonl) 2>&1
 INNEREOF
 )
 
