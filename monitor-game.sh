@@ -152,16 +152,25 @@ for line in sys.stdin:
                         compact = compact[:117] + "..."
                     print(f"\n{YELLOW}[tool: {name}]{RESET} {compact}")
 
-    # --- Tool results ---
+    # --- Tool results (surface training progress lines) ---
     elif etype == "result":
+        import re
+        TRAINING_RE = [re.compile(p) for p in [
+            r"step\s+\d+", r"val_bpb", r"tokens/sec", r"MFU",
+            r"loss[\s=:]", r"training time", r"compil",
+        ]]
         content = event.get("result", "")
-        # Show first few lines of tool output
         if isinstance(content, str) and content:
             lines_out = content.split("\n")
-            preview = "\n  ".join(lines_out[:5])
-            if len(lines_out) > 5:
-                preview += f"\n  {DIM}... ({len(lines_out) - 5} more lines){RESET}"
-            print(f"{DIM}  {preview}{RESET}")
+            training_lines = [l for l in lines_out if any(p.search(l) for p in TRAINING_RE)]
+            other_lines = [l for l in lines_out if l.strip() and not any(p.search(l) for p in TRAINING_RE)]
+            for l in training_lines:
+                print(f"  {l}")
+            if not training_lines and other_lines:
+                preview = "\n  ".join(other_lines[:3])
+                if len(other_lines) > 3:
+                    preview += f"\n  {DIM}... ({len(other_lines) - 3} more lines){RESET}"
+                print(f"{DIM}  {preview}{RESET}")
 
     # --- System / other ---
     elif etype == "system":

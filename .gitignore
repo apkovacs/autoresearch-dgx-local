@@ -22,5 +22,8 @@ dev/
 # Results file
 results.tsv
 
+# Claude Code settings (generated inside container)
+.claude/
+
 # Orchestrator logs (event log + agent transcripts)
 logs/

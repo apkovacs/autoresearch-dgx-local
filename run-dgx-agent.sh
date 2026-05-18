@@ -152,6 +152,53 @@ echo "  Model:       $OLLAMA_MODEL"
 echo "  Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
 echo ""
 
+# Pre-configure git safe.directory (avoids permission prompts inside Claude Code)
+git config --global --add safe.directory /workspace
+
+# Configure Claude Code permissions for autonomous operation
+# Scoped to the experiment: agent can only edit train.py, run training,
+# read the workspace, and use git. Cannot modify other scripts, install
+# packages, or access files outside the workspace.
+mkdir -p /workspace/.claude
+cat > /workspace/.claude/settings.json << 'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Edit(/workspace/train.py)",
+      "Read(/workspace/*)",
+      "Write(/workspace/results.tsv)",
+      "Bash(python train.py*)",
+      "Bash(python prepare.py*)",
+      "Bash(python3 train.py*)",
+      "Bash(python3 prepare.py*)",
+      "Bash(python -c *)",
+      "Bash(python3 -c *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git log*)",
+      "Bash(git checkout *)",
+      "Bash(git branch*)",
+      "Bash(git stash*)",
+      "Bash(git rev-parse*)",
+      "Bash(grep *)",
+      "Bash(diff *)",
+      "Bash(wc *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(nvidia-smi*)"
+    ],
+    "deny": []
+  }
+}
+SETTINGS
+
+# Symlink cache so the agent can find data at the default path
+ln -sfn /cache/autoresearch /root/.cache/autoresearch 2>/dev/null || true
+
 # Prepare data
 echo "=== Preparing training data ==="
 python prepare.py --num-shards 10
@@ -189,9 +236,11 @@ echo "    bash monitor-game.sh --transcript   (agent thinking + tool calls)"
 echo "    bash monitor-game.sh --events       (event stream)"
 echo ""
 
-# Launch Claude Code with stream-json output, capturing transcript
+# Launch Claude Code with stream-json output
+# stream_formatter.py saves full JSON to the transcript file while
+# printing formatted output to the terminal (agent activity + training progress)
 claude -p --verbose --output-format stream-json "$(cat program.md)" \
-    > >(tee logs/transcripts/agent.jsonl) 2>&1
+    2>&1 | python3 stream_formatter.py logs/transcripts/agent.jsonl
 INNEREOF
 )
 
