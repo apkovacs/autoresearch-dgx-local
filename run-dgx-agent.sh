@@ -190,7 +190,7 @@ echo "    bash monitor-game.sh --events       (event stream)"
 echo ""
 
 # Launch Claude Code with stream-json output, capturing transcript
-claude -p --output-format stream-json "$(cat program.md)" \
+claude -p --verbose --output-format stream-json "$(cat program.md)" \
     > >(tee logs/transcripts/agent.jsonl) 2>&1
 INNEREOF
 )
