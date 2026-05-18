@@ -16,6 +16,8 @@ queue/
 CLAUDE.md
 AGENTS.md
 _round_prompt.md
+run_experiment.sh
+run.log
 
 # Experimental code/artifacts
 dev/

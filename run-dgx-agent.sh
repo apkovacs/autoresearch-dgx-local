@@ -172,6 +172,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Write(/workspace/run.log)",
       "Write(run.log)",
       "Bash(ls /cache/*)",
+      "Bash(bash run_experiment.sh*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -232,6 +233,19 @@ if [ ! -f results.tsv ]; then
     echo "Created results.tsv with header"
 fi
 
+# Create experiment runner script (handles output redirect so the agent doesn't need to)
+cat > /workspace/run_experiment.sh << 'RUNEXP'
+#!/usr/bin/env bash
+# Wrapper: runs train.py and captures output to run.log
+# Usage: bash run_experiment.sh
+python train.py > run.log 2>&1
+exit_code=$?
+echo "=== Experiment finished (exit code: $exit_code) ==="
+grep "^val_bpb:\|^peak_vram_mb:\|^training_seconds:" run.log 2>/dev/null || echo "(no metrics found — check run.log for errors)"
+exit $exit_code
+RUNEXP
+chmod +x /workspace/run_experiment.sh
+
 # Write CLAUDE.md so the agent knows the environment is ready
 # This overrides the Setup section of program.md
 cat > /workspace/CLAUDE.md << CLAUDEMD
@@ -246,15 +260,17 @@ cat > /workspace/CLAUDE.md << CLAUDEMD
 Do NOT run the Setup section of program.md. Go directly to the Experimentation loop.
 
 ## IMPORTANT: Command differences from program.md
+- Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
+  This wrapper captures output to run.log and prints key metrics when done.
+- Do NOT use output redirection (\`>\`) in bash commands — it is blocked by the sandbox.
 - Use \`python train.py\` instead of \`uv run train.py\` (there is no uv in this environment)
-- Use \`python train.py > run.log 2>&1\` to run experiments
 - Data is already prepared — do NOT run prepare.py
 
 ## What you can modify
 Only train.py — this is the single file you should edit.
 
 ## Start now
-Read train.py, then run the baseline: \`python train.py > run.log 2>&1\`
+Read train.py, then run the baseline: \`bash run_experiment.sh\`
 Then begin the experiment loop from program.md.
 CLAUDEMD
 
