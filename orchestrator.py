@@ -167,7 +167,7 @@ def run_branch_round(config, branch_name_short, num_experiments, focus):
     )
     transcript_file = open(transcript_path, "w")
 
-    cmd = f'claude -p --output-format stream-json "$(cat {AGENT_PROMPT_FILE})"'
+    cmd = f'claude -p --verbose --output-format stream-json "$(cat {AGENT_PROMPT_FILE})"'
     proc = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid,
                             stdout=transcript_file, stderr=subprocess.STDOUT)
 
