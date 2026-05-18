@@ -175,7 +175,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
     "allow": [
       "Edit(/workspace/train.py)",
       "Read(/workspace/*)",
+      "Read(/cache/autoresearch/*)",
       "Write(/workspace/results.tsv)",
+      "Bash(ls /cache/*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
