@@ -101,28 +101,29 @@ def format_event(event):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 stream_formatter.py <transcript_path>", file=sys.stderr)
-        sys.exit(1)
+    transcript_path = sys.argv[1] if len(sys.argv) >= 2 else None
+    transcript = open(transcript_path, "w") if transcript_path else None
 
-    transcript_path = sys.argv[1]
-
-    with open(transcript_path, "w") as transcript:
+    try:
         for line in sys.stdin:
-            # Always write raw JSON to transcript
-            transcript.write(line)
-            transcript.flush()
+            # Write raw JSON to transcript file if provided
+            if transcript:
+                transcript.write(line)
+                transcript.flush()
 
             # Parse and format for terminal
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
             try:
-                event = json.loads(line)
+                event = json.loads(stripped)
                 format_event(event)
             except json.JSONDecodeError:
                 # Non-JSON output (stderr, etc.) — print directly
-                print(line)
+                print(stripped)
+    finally:
+        if transcript:
+            transcript.close()
 
     sys.stdout.flush()
 
