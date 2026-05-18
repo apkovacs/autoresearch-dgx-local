@@ -31,7 +31,7 @@ Run the autonomous experiment loop with a local LLM (no external APIs):
 
 ```bash
 git clone https://github.com/apkovacs/autoresearch-dgx.git
-cd autoresearch
+cd autoresearch-dgx
 git checkout dgx-spark
 bash run-dgx-agent.sh
 ```
