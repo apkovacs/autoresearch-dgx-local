@@ -116,6 +116,15 @@ SETUP_SCRIPT=$(cat <<INNEREOF
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Restore .git ownership to host user on exit (container runs as root,
+# which creates root-owned .git/objects that the host user can't write to)
+fix_git_ownership() {
+    if [ -n "\${HOST_UID:-}" ] && [ -n "\${HOST_GID:-}" ]; then
+        chown -R "\$HOST_UID:\$HOST_GID" /workspace/.git 2>/dev/null || true
+    fi
+}
+trap fix_git_ownership EXIT
+
 echo "=== Setting up game orchestrator environment ==="
 
 # 1. Install Python dependencies
@@ -288,6 +297,8 @@ docker run -it --rm \
     -v "$OLLAMA_MODELS":/root/.ollama/models \
     -e AUTORESEARCH_CACHE_DIR=/cache/autoresearch \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
+    -e HOST_UID="$(id -u)" \
+    -e HOST_GID="$(id -g)" \
     -e NCCL_P2P_DISABLE=1 \
     -e TORCH_CUDA_ARCH_LIST=12.0 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
