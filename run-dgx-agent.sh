@@ -166,7 +166,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
     "allow": [
       "Edit(/workspace/train.py)",
       "Read(/workspace/*)",
+      "Read(/cache/autoresearch/*)",
       "Write(/workspace/results.tsv)",
+      "Bash(ls /cache/*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -189,6 +191,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(tail *)",
       "Bash(cat *)",
       "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(test *)",
+      "Bash(echo *)",
       "Bash(nvidia-smi*)"
     ],
     "deny": []
@@ -202,6 +207,23 @@ ln -sfn /cache/autoresearch /root/.cache/autoresearch 2>/dev/null || true
 # Prepare data
 echo "=== Preparing training data ==="
 python prepare.py --num-shards 10
+
+# Write CLAUDE.md so the agent knows the environment is ready
+cat > /workspace/CLAUDE.md << 'CLAUDEMD'
+# Environment Notes
+
+## Data is pre-prepared
+Training data and tokenizer are already downloaded and ready.
+You do NOT need to run prepare.py or check for data — it has already been done.
+The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch).
+
+## How to run an experiment
+Just run: python train.py
+The data path is configured via AUTORESEARCH_CACHE_DIR environment variable.
+
+## What you can modify
+Only train.py — this is the single file you should edit. Do not modify prepare.py or any other files.
+CLAUDEMD
 
 echo ""
 echo "=== Launching autonomous agent ==="
