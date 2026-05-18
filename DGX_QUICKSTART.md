@@ -48,6 +48,23 @@ OLLAMA_MODEL=qwen2.5-coder:14b bash run-dgx-agent.sh  # Code-specialized
 
 Run `bash run-dgx-agent.sh --help` to see all tested models.
 
+## Multi-Branch Game Strategies
+
+Run multiple competing/cooperating research branches:
+
+```bash
+# Island Model — 3 branches with migration
+bash run-dgx-game.sh --mode island
+
+# Multi-Armed Bandit — UCB1 arm selection
+bash run-dgx-game.sh --mode bandit
+
+# Iterated Coopetition — 2 branches, forced adoption
+bash run-dgx-game.sh --mode coopetition
+```
+
+Configure branch count, migration rates, and other parameters in `game_config.yaml`. See [Game Strategies](GAME_STRATEGIES.md) for details.
+
 ## Verify Setup Without Training
 
 ```bash
@@ -66,6 +83,7 @@ This checks Docker, GPU access, PyTorch, and the cache directory without running
 
 ## Next Steps
 
+- [Game Strategies](GAME_STRATEGIES.md) — Multi-branch strategy details and tuning
 - [Detailed Setup](DGX_SETUP.md) — Persistent storage, model selection, parameter tuning
 - [Troubleshooting](DGX_TROUBLESHOOTING.md) — If something goes wrong
 - [Overview](DGX_SPARK_README.md) — What changed from the original and why

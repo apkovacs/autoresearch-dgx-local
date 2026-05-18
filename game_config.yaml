@@ -1,0 +1,72 @@
+# autoresearch-dgx Game Configuration
+#
+# Controls the meta-research orchestration layer.
+# Edit this file to configure the game strategy, then run:
+#   bash run-dgx-game.sh
+#
+# Modes:
+#   base         — Original autoresearch loop (single branch, no game theory)
+#   island       — Island Model with Adaptive Resource Allocation
+#   bandit       — Multi-Armed Bandit (UCB1)
+#   coopetition  — Iterated Coopetition
+
+mode: base                      # base | island | bandit | coopetition
+tag: "run1"                     # session identifier (used in branch names)
+base_branch: dgx-spark          # branch to fork research branches from
+
+round_timeout_minutes: 60       # kill agent if a round exceeds this
+experiment_duration_minutes: 5   # expected duration of one training run
+
+# --- Island Model ---
+island:
+  branches:
+    - name: arch
+      focus: "architecture changes (depth, width, attention heads, window patterns)"
+      budget: 4
+    - name: optim
+      focus: "optimizer and learning rate changes (LRs, schedules, decay, betas)"
+      budget: 4
+    - name: data
+      focus: "batch size, gradient accumulation, sequence handling, data efficiency"
+      budget: 4
+  migration_rate: 0.3            # fraction of params to migrate between branches
+  migration_select: best_delta   # best_delta | random
+  adaptive_allocation: true      # adjust budgets based on improvement rates
+  min_budget_ratio: 0.2          # no branch gets less than 20% of mean budget
+
+# --- Multi-Armed Bandit (UCB1) ---
+bandit:
+  arms:
+    - name: large_arch
+      strategy: "increase model size (depth, width, more heads)"
+    - name: small_arch
+      strategy: "decrease model size, maximize throughput and token efficiency"
+    - name: lr_search
+      strategy: "learning rate sweeps and schedule modifications"
+    - name: optimizer
+      strategy: "optimizer hyperparameters (betas, weight decay, momentum)"
+  exploration_constant: 1.414    # UCB1 C parameter (higher = more exploration)
+  warmup_rounds: 2               # every arm gets this many rounds before UCB1 kicks in
+  experiments_per_round: 3       # experiments per arm per round
+
+# --- Iterated Coopetition ---
+coopetition:
+  branches:
+    - name: alpha
+    - name: beta
+  experiments_per_round: 4       # experiments per branch per round
+  adoption_count: 2              # loser adopts this many params from winner
+  adoption_select: best_delta    # best_delta | random | worst_own
+
+# --- Meta-Agent (Layer 3) ---
+# When enabled, an LLM reviews cross-branch results between rounds
+# and can mutate game parameters to improve the research strategy.
+meta_agent:
+  enabled: false                 # set true to let LLM tune game parameters
+  interval_rounds: 5             # run meta-agent every N rounds
+
+# --- State (managed by orchestrator, do not edit manually) ---
+state:
+  current_round: 0
+  leaderboard: {}
+  round_history: []
