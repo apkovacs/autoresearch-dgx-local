@@ -41,13 +41,29 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Check if running in container or on host ---
+DETECTED_CONTAINER=""
 if [ -f "$EVENT_LOG" ]; then
+    # Event log exists locally (inside container or host with volume mount)
     RUN_PREFIX=""
 elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
     RUN_PREFIX="docker exec $CONTAINER_NAME"
+    DETECTED_CONTAINER="$CONTAINER_NAME"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx-agent$"; then
+    RUN_PREFIX="docker exec autoresearch-dgx-agent"
+    DETECTED_CONTAINER="autoresearch-dgx-agent"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx$"; then
+    RUN_PREFIX="docker exec autoresearch-dgx"
+    DETECTED_CONTAINER="autoresearch-dgx"
 else
-    echo "ERROR: No event log found and container '$CONTAINER_NAME' is not running."
-    echo "Start the orchestrator first: bash run-dgx-game.sh --mode <mode>"
+    echo "ERROR: No event log found and no autoresearch container is running."
+    echo ""
+    echo "Start one of:"
+    echo "  bash run-dgx-game.sh --mode <mode>   (game orchestrator)"
+    echo "  bash run-dgx-agent.sh                (single-branch agent)"
+    echo ""
+    echo "Note: The single-branch agent (run-dgx-agent.sh) does not produce"
+    echo "an event log. Use 'docker logs -f autoresearch-dgx-agent' to monitor it,"
+    echo "or switch to run-dgx-game.sh --mode base for full observability."
     exit 1
 fi
 
