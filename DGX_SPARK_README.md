@@ -31,6 +31,7 @@ flash-attn3 has no ARM64 builds. We replace it with PyTorch's built-in `scaled_d
 ### Infrastructure
 
 - Docker containerization with unified-memory-safe flags (`--oom-score-adj`, `--shm-size 64gb`)
+- GPU memory time-sharing: `OLLAMA_KEEP_ALIVE=0` unloads the LLM during training, freeing ~18 GB for PyTorch
 - Persistent training shard storage via Docker volume mounts
 - Optional local LLM agent (Ollama + Claude Code) for autonomous experimentation
 - Pre-built Docker image (`Dockerfile`) for fast container launches

@@ -104,6 +104,7 @@ Key changes from the upstream H100 configuration:
 - **Reduced hyperparameters**: `DEPTH=4`, `TOTAL_BATCH_SIZE=2^16`, `DEVICE_BATCH_SIZE=8`
 - **MFU constant**: 209 TFLOPS BF16 (GB10 Blackwell, replacing H100's 989 TFLOPS)
 - **OOM protection**: `--oom-score-adj 1000` prevents GPU memory pressure from freezing the host (unified memory architecture)
+- **GPU memory sharing**: `OLLAMA_KEEP_ALIVE=0` unloads the LLM during training, freeing ~18 GB for PyTorch
 - **Persistent storage**: Training shards and Ollama model weights survive container restarts via Docker volume mounts
 
 ## Project structure

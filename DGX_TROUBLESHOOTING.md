@@ -245,6 +245,21 @@ CLI flags: `--max-restarts N` (default 3), `--no-restart` to disable, `--experim
 
 ---
 
+## Training MFU Drops Mid-Run (e.g., 11% → 5%)
+
+**Symptom**: Training starts at normal throughput (~11% MFU) but drops sharply partway through. `dt` per step roughly doubles.
+
+**Cause**: The Ollama LLM model is still loaded in GPU memory, competing with the training run for unified memory bandwidth. This is most visible with larger training configs (DEPTH=8) or larger LLMs (27B).
+
+**Fix**:
+- Verify `OLLAMA_KEEP_ALIVE=0` is set (default in the launcher). This unloads the model between agent reasoning turns.
+- Check with `ollama ps` — if a model is listed during training, it's consuming GPU memory
+- If you set `OLLAMA_KEEP_ALIVE` to a non-zero value, the model stays loaded and competes with training
+
+**Tradeoff**: `OLLAMA_KEEP_ALIVE=0` adds ~10–30s of model reload time after each training run. On a 5-minute training cycle, this is a small cost for significantly better training throughput.
+
+---
+
 ## Ollama Model Pull Fails
 
 **Symptom**: `Error: pull model manifest: file does not exist` when pulling a model.
