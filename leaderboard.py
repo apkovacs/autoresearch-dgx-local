@@ -8,7 +8,7 @@ across all research branches in the game config state.
 import os
 
 RESULTS_DIR = "results"
-HEADER = "commit\tval_bpb\tmemory_gb\tstatus\tdescription"
+HEADER = "commit\tval_bpb\tmemory_gb\tstatus\tdescription\ttimestamp"
 
 
 def parse_results_tsv(path):
@@ -26,6 +26,7 @@ def parse_results_tsv(path):
                     "memory_gb": float(parts[2]),
                     "status": parts[3],
                     "description": parts[4] if len(parts) > 4 else "",
+                    "timestamp": parts[5] if len(parts) > 5 else "",
                 })
     return rows
 

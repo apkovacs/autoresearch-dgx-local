@@ -68,10 +68,10 @@ grep "^val_bpb:" run.log
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 6 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	val_bpb	memory_gb	status	description	timestamp
 ```
 
 1. git commit hash (short, 7 chars)
@@ -79,6 +79,7 @@ commit	val_bpb	memory_gb	status	description
 3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
 4. status: `keep`, `discard`, or `crash`
 5. short text description of what this experiment tried
+6. timestamp — added automatically by `log_result.sh`
 
 ## The experiment loop
 

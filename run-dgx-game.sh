@@ -273,15 +273,16 @@ chmod +x /workspace/run_experiment.sh
 # Create results logger script (>> redirect is blocked by Claude Code sandbox)
 cat > /workspace/log_result.sh << 'LOGEXP'
 #!/usr/bin/env bash
-# Wrapper: appends experiment result to results.tsv
+# Wrapper: appends experiment result to results.tsv (with UTC timestamp)
 # Usage: bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION
 if [ $# -lt 5 ]; then
     echo "Usage: bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION"
     echo "Example: bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline"
     exit 1
 fi
-printf "%s\t%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$4" "$5" >> results.tsv
-echo "Logged to results.tsv: $1  val_bpb=$2  mem=$3GB  status=$4  $5"
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$4" "$5" "$TS" >> results.tsv
+echo "Logged to results.tsv: $1  val_bpb=$2  mem=$3GB  status=$4  $5  [$TS]"
 LOGEXP
 chmod +x /workspace/log_result.sh
 
@@ -292,7 +293,7 @@ cat > /workspace/CLAUDE.md << 'CLAUDEMD'
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
 - Use `bash run_experiment.sh` to run experiments (NOT `python train.py > run.log 2>&1`)
-- Use `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION` to log results
+- Use `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION` to log results (timestamp added automatically)
 - Do NOT use output redirection (`>` or `>>`) in bash commands — it is blocked by the sandbox.
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
