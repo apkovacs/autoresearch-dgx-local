@@ -149,10 +149,10 @@ else
     fi
 fi
 
-# Start Ollama server (OLLAMA_KEEP_ALIVE=0 unloads model between agent turns,
-# freeing ~18GB GPU memory for training runs)
-echo "[start] Starting Ollama server..."
-export OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE"
+# Start Ollama server (OLLAMA_KEEP_ALIVE is passed via docker run -e;
+# default 0 unloads model between agent turns, freeing ~18GB for training)
+echo "[start] Starting Ollama server (keep-alive: ${OLLAMA_KEEP_ALIVE:-0})..."
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 ollama serve &>/dev/null &
 OLLAMA_PID=$!
 sleep 3
@@ -702,6 +702,7 @@ docker run -it --rm \
     -v "$OLLAMA_MODELS":/root/.ollama/models \
     -e AUTORESEARCH_CACHE_DIR=/cache/autoresearch \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
+    -e OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
     -e HOST_UID="$(id -u)" \
     -e HOST_GID="$(id -g)" \
     -e MAX_RESTARTS="$MAX_RESTARTS" \
