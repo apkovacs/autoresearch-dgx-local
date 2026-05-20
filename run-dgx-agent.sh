@@ -30,14 +30,25 @@ OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
 CONTAINER_NAME="autoresearch-dgx-agent"
+MAX_RESTARTS=3
+RESTART_COOLDOWN=10
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --max-restarts)
+            MAX_RESTARTS="$2"; shift 2 ;;
+        --no-restart)
+            MAX_RESTARTS=0; shift ;;
         -h|--help)
-            echo "Usage: bash run-dgx-agent.sh [-h|--help]"
+            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [-h|--help]"
             echo ""
             echo "Launches the autonomous autoresearch agent with a local LLM."
+            echo ""
+            echo "Options:"
+            echo "  --max-restarts N  Auto-restart agent up to N times on crash (default: 3)"
+            echo "  --no-restart      Disable auto-restart (exit on first crash)"
+            echo "  -h, --help        Show this help"
             echo ""
             echo "Environment variables:"
             echo "  OLLAMA_MODEL     Model to use (default: qwen3.6:27b)"
@@ -86,6 +97,7 @@ echo "  Shard cache:      $SHARD_CACHE_DIR"
 echo "  Ollama models:    $OLLAMA_MODELS"
 echo "  Shared memory:    $SHM_SIZE"
 echo "  Container name:   $CONTAINER_NAME"
+echo "  Max restarts:     $MAX_RESTARTS"
 echo ""
 
 # --- Build the in-container setup script ---
@@ -360,20 +372,19 @@ echo ""
 mkdir -p logs/transcripts
 
 # Write initial event to event log
-python3 -c "
-import json, time
+log_event() {
+    python3 -c "
+import json, time, sys
 from datetime import datetime, timezone
-event = {
-    'ts': datetime.now(timezone.utc).isoformat(),
-    'elapsed_s': time.monotonic(),
-    'event': 'orchestrator_start',
-    'mode': 'base',
-    'tag': 'agent',
-    'config': 'run-dgx-agent.sh',
-}
+event = json.loads(sys.argv[1])
+event['ts'] = datetime.now(timezone.utc).isoformat()
+event['elapsed_s'] = time.monotonic()
 with open('logs/events.jsonl', 'a') as f:
     f.write(json.dumps(event) + '\n')
-"
+" "$1"
+}
+
+log_event '{"event": "orchestrator_start", "mode": "base", "tag": "agent", "config": "run-dgx-agent.sh"}'
 
 echo "  Event log:    logs/events.jsonl"
 echo "  Transcript:   logs/transcripts/agent.jsonl"
@@ -383,11 +394,120 @@ echo "    bash monitor-game.sh --transcript   (agent thinking + tool calls)"
 echo "    bash monitor-game.sh --events       (event stream)"
 echo ""
 
-# Launch Claude Code with stream-json output
-# stream_formatter.py saves full JSON to the transcript file while
-# printing formatted output to the terminal (agent activity + training progress)
-claude -p --permission-mode dontAsk --verbose --output-format stream-json "$(cat program.md)" \
-    2>&1 | python3 stream_formatter.py logs/transcripts/agent.jsonl
+# --- Agent launch with auto-restart ---
+MAX_RESTARTS=${MAX_RESTARTS:-3}
+RESTART_COOLDOWN=${RESTART_COOLDOWN:-10}
+ATTEMPT=0
+
+while true; do
+    ATTEMPT=$((ATTEMPT + 1))
+    TRANSCRIPT="logs/transcripts/agent_$(date -u +%Y%m%dT%H%M%SZ).jsonl"
+
+    if [ "$ATTEMPT" -gt 1 ]; then
+        echo ""
+        echo "=== Agent restart (attempt $ATTEMPT/$((MAX_RESTARTS + 1))) ==="
+
+        # Count existing experiments so the agent knows where it left off
+        EXISTING=0
+        if [ -f results.tsv ]; then
+            EXISTING=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
+        fi
+
+        # Update CLAUDE.md for resume context
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        cat > /workspace/CLAUDE.md << RESUMEMD
+# Environment Notes — READ THIS FIRST
+
+## RESUMING — you are restarting after a previous session ended
+- Branch: $CURRENT_BRANCH
+- Experiments completed so far: $EXISTING (check results.tsv for details)
+- Data: pre-downloaded at /cache/autoresearch
+
+**Read results.tsv first** to see what has already been tried, then continue experimenting.
+Do NOT re-run the baseline if results.tsv already has a baseline row.
+Do NOT repeat experiments that are already logged.
+
+## IMPORTANT: Rules
+- Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
+- Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
+- Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results (timestamp added automatically)
+- Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
+- Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
+- Data is already prepared — do NOT run prepare.py
+
+## What you can modify
+Only train.py — this is the single file you should edit.
+Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
+
+## Experiment loop — follow this EXACTLY
+
+For EVERY experiment (including the baseline), do ALL of these steps:
+
+1. Edit train.py with your experimental idea (skip for baseline)
+2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
+3. \`bash run_experiment.sh\`
+4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+5. Get the commit hash: \`git rev-parse --short HEAD\`
+6. **Log the result to results.tsv NOW** — run this command:
+   \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
+   Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
+7. If val_bpb IMPROVED (lower): keep the commit, move on
+8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
+**To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
+Do not manually undo code changes. Do not use python3 -c to edit files.
+
+## Start now
+1. Read results.tsv to see what has been done
+2. Read train.py to understand current state
+3. Continue experimenting from where the previous session left off
+RESUMEMD
+
+        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"existing_experiments\": $EXISTING}"
+        echo "  Existing experiments: $EXISTING"
+        echo "  Cooling down for ${RESTART_COOLDOWN}s..."
+        sleep "$RESTART_COOLDOWN"
+    fi
+
+    echo "  Transcript: $TRANSCRIPT"
+    echo ""
+
+    # Launch Claude Code with stream-json output
+    set +e
+    claude -p --permission-mode dontAsk --verbose --output-format stream-json "$(cat program.md)" \
+        2>&1 | python3 stream_formatter.py "$TRANSCRIPT"
+    EXIT_CODE=$?
+    set -e
+
+    log_event "{\"event\": \"agent_exit\", \"attempt\": $ATTEMPT, \"exit_code\": $EXIT_CODE}"
+
+    if [ "$EXIT_CODE" -eq 0 ]; then
+        echo ""
+        echo "=== Agent exited cleanly (exit code 0) ==="
+        break
+    fi
+
+    echo ""
+    echo "=== Agent exited with code $EXIT_CODE ==="
+
+    if [ "$ATTEMPT" -gt "$MAX_RESTARTS" ]; then
+        echo "Max restarts ($MAX_RESTARTS) reached. Stopping."
+        log_event "{\"event\": \"agent_max_restarts\", \"attempts\": $ATTEMPT}"
+        break
+    fi
+
+    echo "Will restart (attempt $((ATTEMPT + 1))/$((MAX_RESTARTS + 1)))..."
+done
+
+echo ""
+echo "=== Agent session complete ==="
+RESULTS_COUNT=0
+if [ -f results.tsv ]; then
+    RESULTS_COUNT=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
+fi
+echo "  Total experiments logged: $RESULTS_COUNT"
+echo "  Transcripts: logs/transcripts/"
 INNEREOF
 )
 
@@ -408,6 +528,8 @@ docker run -it --rm \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
     -e HOST_UID="$(id -u)" \
     -e HOST_GID="$(id -g)" \
+    -e MAX_RESTARTS="$MAX_RESTARTS" \
+    -e RESTART_COOLDOWN="$RESTART_COOLDOWN" \
     -e NCCL_P2P_DISABLE=1 \
     -e TORCH_CUDA_ARCH_LIST=12.0 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
