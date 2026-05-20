@@ -48,8 +48,9 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Tested models:"
             echo "  qwen3.6:27b          ~18GB  Strong code reasoning (default)"
-            echo "  gemma4:27b           ~16GB  Strong general + code capability"
-            echo "  gemma4:12b           ~7GB   Good capability, more memory headroom"
+            echo "  gemma4:26b           ~18GB  Strong general + code capability"
+            echo "  gemma4:e4b           ~10GB  Good capability, more memory headroom"
+            echo "  gemma4:e2b           ~7GB   Lightweight edge model"
             echo "  qwen2.5-coder:14b    ~8GB   Purpose-built for code tasks"
             echo "  qwen3:8b             ~5GB   Lightweight option"
             echo ""
@@ -103,19 +104,32 @@ trap fix_git_ownership EXIT
 
 echo "=== Setting up autonomous agent environment ==="
 
-# 1. Install Python dependencies
-echo "[1/5] Installing Python dependencies..."
-pip install -q rustbpe huggingface_hub tiktoken pyarrow requests
+# Install dependencies (skipped if using pre-built image)
+if command -v ollama &>/dev/null && command -v claude &>/dev/null && python -c "import rustbpe" 2>/dev/null; then
+    echo "[deps] Pre-built image detected — skipping installs"
+else
+    echo "[1/5] Installing Python dependencies..."
+    pip install -q rustbpe huggingface_hub tiktoken pyarrow requests
 
-# 2. Install Ollama
-echo "[2/5] Installing Ollama..."
-if ! command -v ollama &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq zstd >/dev/null 2>&1
-    curl -fsSL https://ollama.com/install.sh | sh
+    echo "[2/5] Installing Ollama..."
+    if ! command -v ollama &>/dev/null; then
+        apt-get update -qq && apt-get install -y -qq zstd >/dev/null 2>&1
+        curl -fsSL https://ollama.com/install.sh | sh
+    fi
+
+    echo "[4/5] Installing Claude Code..."
+    if ! command -v claude &>/dev/null; then
+        npm install -g @anthropic-ai/claude-code 2>/dev/null || {
+            echo "  Installing Node.js first..."
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - &>/dev/null
+            apt-get install -y nodejs &>/dev/null
+            npm install -g @anthropic-ai/claude-code
+        }
+    fi
 fi
 
-# 3. Start Ollama server
-echo "[3/5] Starting Ollama server..."
+# Start Ollama server
+echo "[start] Starting Ollama server..."
 ollama serve &>/dev/null &
 OLLAMA_PID=$!
 sleep 3
@@ -133,20 +147,9 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# 4. Pull the model (skips if already cached via volume mount)
-echo "[4/5] Pulling model: $OLLAMA_MODEL ..."
+# Pull the model (skips if already cached via volume mount)
+echo "[start] Pulling model: $OLLAMA_MODEL ..."
 ollama pull "$OLLAMA_MODEL"
-
-# 5. Install Claude Code
-echo "[5/5] Installing Claude Code..."
-if ! command -v claude &>/dev/null; then
-    npm install -g @anthropic-ai/claude-code 2>/dev/null || {
-        echo "  Installing Node.js first..."
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash - &>/dev/null
-        apt-get install -y nodejs &>/dev/null
-        npm install -g @anthropic-ai/claude-code
-    }
-fi
 
 # Configure Claude Code to use local Ollama
 export ANTHROPIC_BASE_URL="http://localhost:11434"
