@@ -29,9 +29,10 @@ SHARD_CACHE_DIR="${SHARD_CACHE_DIR:-$HOME/.cache/autoresearch}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
-CONTAINER_NAME="autoresearch-dgx-agent"
+CONTAINER_NAME="autoresearch-dgx-local-agent"
 MAX_RESTARTS=3
 RESTART_COOLDOWN=10
+EXPERIMENTS_PER_SESSION=30
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -40,15 +41,18 @@ while [[ $# -gt 0 ]]; do
             MAX_RESTARTS="$2"; shift 2 ;;
         --no-restart)
             MAX_RESTARTS=0; shift ;;
+        --experiments-per-session)
+            EXPERIMENTS_PER_SESSION="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [-h|--help]"
+            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [--experiments-per-session N] [-h|--help]"
             echo ""
             echo "Launches the autonomous autoresearch agent with a local LLM."
             echo ""
             echo "Options:"
-            echo "  --max-restarts N  Auto-restart agent up to N times on crash (default: 3)"
-            echo "  --no-restart      Disable auto-restart (exit on first crash)"
-            echo "  -h, --help        Show this help"
+            echo "  --max-restarts N             Auto-restart agent up to N times (default: 3)"
+            echo "  --no-restart                 Disable auto-restart (exit on first stop)"
+            echo "  --experiments-per-session N   Restart for fresh context after N experiments (default: 30)"
+            echo "  -h, --help                   Show this help"
             echo ""
             echo "Environment variables:"
             echo "  OLLAMA_MODEL     Model to use (default: qwen3.6:27b)"
@@ -98,6 +102,7 @@ echo "  Ollama models:    $OLLAMA_MODELS"
 echo "  Shared memory:    $SHM_SIZE"
 echo "  Container name:   $CONTAINER_NAME"
 echo "  Max restarts:     $MAX_RESTARTS"
+echo "  Exp/session:      $EXPERIMENTS_PER_SESSION"
 echo ""
 
 # --- Build the in-container setup script ---
@@ -196,6 +201,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(ls /cache/*)",
       "Bash(bash run_experiment.sh*)",
       "Bash(bash log_result.sh*)",
+      "Bash(bash revert_train.sh*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -206,7 +212,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git diff*)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git log*)",
+      "Bash(git log --oneline*)",
       "Bash(git checkout *)",
       "Bash(git branch*)",
       "Bash(git stash*)",
@@ -285,15 +291,56 @@ fi
 # Create experiment runner script (handles output redirect so the agent doesn't need to)
 cat > /workspace/run_experiment.sh << 'RUNEXP'
 #!/usr/bin/env bash
-# Wrapper: runs train.py and captures output to run.log
+# Wrapper: validates train.py, runs it, and captures output to run.log
+# - Syntax-checks before running (catches bad edits instantly)
+# - Saves .train.py.lastgood after each successful run
 # Usage: bash run_experiment.sh
+
+# Step 1: Syntax check — fail fast on bad edits
+echo "Checking train.py syntax..."
+if ! python -c "import py_compile; py_compile.compile('train.py', doraise=True)" 2> /tmp/syntax_err.txt; then
+    echo "=== SYNTAX ERROR in train.py ==="
+    cat /tmp/syntax_err.txt
+    echo ""
+    echo "Fix the error or run: bash revert_train.sh"
+    exit 2
+fi
+
+# Step 2: Run training
 python train.py > run.log 2>&1
 exit_code=$?
 echo "=== Experiment finished (exit code: $exit_code) ==="
 grep "^val_bpb:\|^peak_vram_mb:\|^training_seconds:" run.log 2>/dev/null || echo "(no metrics found — check run.log for errors)"
+
+# Step 3: Save last-good backup if training produced results
+if grep -q "^val_bpb:" run.log 2>/dev/null; then
+    cp train.py .train.py.lastgood
+fi
+
 exit $exit_code
 RUNEXP
 chmod +x /workspace/run_experiment.sh
+
+# Create revert script (restores train.py from last-good backup)
+cat > /workspace/revert_train.sh << 'REVERT'
+#!/usr/bin/env bash
+# Restores train.py from the last successful version.
+# Usage: bash revert_train.sh
+if [ -f .train.py.lastgood ]; then
+    cp .train.py.lastgood train.py
+    echo "Reverted train.py to last working version."
+    echo "Diff from current git HEAD:"
+    git diff train.py 2>/dev/null | head -30
+else
+    echo "No .train.py.lastgood found. Reverting to git HEAD instead."
+    git checkout -- train.py
+    echo "Reverted train.py to last committed version."
+fi
+REVERT
+chmod +x /workspace/revert_train.sh
+
+# Save initial train.py as the first last-good backup
+cp /workspace/train.py /workspace/.train.py.lastgood
 
 # Create results logger script (>> redirect is blocked by Claude Code sandbox)
 cat > /workspace/log_result.sh << 'LOGEXP'
@@ -332,9 +379,32 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
 
+## Available commands
+Wrapper scripts (use these, not raw commands):
+- \`bash run_experiment.sh\` — syntax-check + train + save backup
+- \`bash log_result.sh COMMIT BPB MEM STATUS DESC\` — log to results.tsv
+- \`bash revert_train.sh\` — restore last working train.py
+
+Git (only these forms work):
+- \`git add train.py && git commit -m "msg"\` — commit changes
+- \`git diff train.py\` — see uncommitted changes
+- \`git log --oneline -5\` — recent commits (MUST use --oneline)
+- \`git reset --hard HEAD~1\` — revert last commit
+- \`git rev-parse --short HEAD\` — get commit hash
+- \`git status\` — check working tree
+
+Reading files:
+- \`grep "^val_bpb:\|^peak_vram_mb:" run.log\` — get experiment results
+- \`tail -n 50 run.log\` — read error output from failed runs
+
 ## What you can modify
 Only train.py — this is the single file you should edit.
 Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
+
+## Safety nets
+- \`bash run_experiment.sh\` **automatically syntax-checks** train.py before running. If there is a syntax error, it will tell you immediately (exit code 2) without wasting training time.
+- If you break train.py, run \`bash revert_train.sh\` to restore the last working version.
+- After each successful training run, train.py is backed up automatically.
 
 ## Experiment loop — follow this EXACTLY
 
@@ -343,22 +413,24 @@ For EVERY experiment (including the baseline), do ALL of these steps:
 1. Edit train.py with your experimental idea (skip for baseline)
 2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
 3. \`bash run_experiment.sh\`
-4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-5. Get the commit hash: \`git rev-parse --short HEAD\`
-6. **Log the result to results.tsv NOW** — run this command:
+4. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
+5. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+6. Get the commit hash: \`git rev-parse --short HEAD\`
+7. **Log the result to results.tsv NOW** — run this command:
    \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
    Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+8. If val_bpb IMPROVED (lower): keep the commit, move on
+9. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 7) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
+**If train.py is broken, run \`bash revert_train.sh\` to restore the last working version.**
 Do not manually undo code changes. Do not use python3 -c to edit files.
 
 ## Start now
 1. Read train.py
 2. Run the baseline: \`bash run_experiment.sh\`
-3. Log the baseline to results.tsv (step 6 above)
+3. Log the baseline to results.tsv (step 7 above)
 4. Begin experimenting
 CLAUDEMD
 
@@ -395,83 +467,146 @@ echo "    bash monitor-game.sh --events       (event stream)"
 echo ""
 
 # --- Agent launch with auto-restart ---
+# The agent is instructed to NEVER STOP. Any exit — clean or crash — is
+# premature and should trigger a restart, UNLESS the user sent Ctrl+C.
 MAX_RESTARTS=${MAX_RESTARTS:-3}
 RESTART_COOLDOWN=${RESTART_COOLDOWN:-10}
 ATTEMPT=0
+USER_STOPPED=false
+
+trap 'USER_STOPPED=true' INT TERM
+
+count_experiments() {
+    if [ -f results.tsv ]; then
+        tail -n +2 results.tsv | wc -l | tr -d ' '
+    else
+        echo 0
+    fi
+}
 
 while true; do
     ATTEMPT=$((ATTEMPT + 1))
     TRANSCRIPT="logs/transcripts/agent_$(date -u +%Y%m%dT%H%M%SZ).jsonl"
+    BEFORE_COUNT=$(count_experiments)
 
     if [ "$ATTEMPT" -gt 1 ]; then
         echo ""
         echo "=== Agent restart (attempt $ATTEMPT/$((MAX_RESTARTS + 1))) ==="
 
-        # Count existing experiments so the agent knows where it left off
-        EXISTING=0
+        # Extract best and baseline val_bpb from results.tsv
+        BEST_BPB="unknown"
+        BASELINE_BPB="unknown"
+        HAS_BASELINE=false
         if [ -f results.tsv ]; then
-            EXISTING=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
+            # Best val_bpb among kept experiments (lowest non-zero value)
+            BEST_BPB=$(awk -F'\t' 'NR>1 && $4=="keep" && $2+0>0 {print $2}' results.tsv | sort -n | head -1)
+            [ -z "$BEST_BPB" ] && BEST_BPB="unknown"
+            # Baseline is the first row with "baseline" in description
+            BASELINE_BPB=$(awk -F'\t' 'NR>1 && $5~/baseline/ {print $2; exit}' results.tsv)
+            [ -n "$BASELINE_BPB" ] && HAS_BASELINE=true || BASELINE_BPB="not yet run"
         fi
 
-        # Update CLAUDE.md for resume context
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        # Update CLAUDE.md for resume — forward-looking, no history
         cat > /workspace/CLAUDE.md << RESUMEMD
 # Environment Notes — READ THIS FIRST
 
-## RESUMING — you are restarting after a previous session ended
-- Branch: $CURRENT_BRANCH
-- Experiments completed so far: $EXISTING (check results.tsv for details)
-- Data: pre-downloaded at /cache/autoresearch
+## Current state
+- Baseline val_bpb: $BASELINE_BPB
+- Best val_bpb so far: $BEST_BPB (this is the number to beat)
+- Experiments completed: $BEFORE_COUNT
+- train.py reflects the best version so far — read it and improve from here
 
-**Read results.tsv first** to see what has already been tried, then continue experimenting.
-Do NOT re-run the baseline if results.tsv already has a baseline row.
-Do NOT repeat experiments that are already logged.
+$([ "$HAS_BASELINE" = false ] && echo "The baseline has NOT been run yet. Run it first: \`bash run_experiment.sh\`")
+Do NOT re-run the baseline if it has already been run (check above).
 
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
-- Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
-- Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results (timestamp added automatically)
 - Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
+
+## Available commands
+Wrapper scripts (use these, not raw commands):
+- \`bash run_experiment.sh\` — syntax-check + train + save backup
+- \`bash log_result.sh COMMIT BPB MEM STATUS DESC\` — log to results.tsv
+- \`bash revert_train.sh\` — restore last working train.py
+
+Git (only these forms work):
+- \`git add train.py && git commit -m "msg"\` — commit changes
+- \`git diff train.py\` — see uncommitted changes
+- \`git log --oneline -5\` — recent commits (MUST use --oneline)
+- \`git reset --hard HEAD~1\` — revert last commit
+- \`git rev-parse --short HEAD\` — get commit hash
+- \`git status\` — check working tree
+
+Reading files:
+- \`grep "^val_bpb:\|^peak_vram_mb:" run.log\` — get experiment results
+- \`tail -n 50 run.log\` — read error output from failed runs
 
 ## What you can modify
 Only train.py — this is the single file you should edit.
 Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
 
+## Safety nets
+- \`bash run_experiment.sh\` **automatically syntax-checks** train.py before running. If there is a syntax error, it will tell you immediately (exit code 2) without wasting training time.
+- If you break train.py, run \`bash revert_train.sh\` to restore the last working version.
+- After each successful training run, train.py is backed up automatically.
+
 ## Experiment loop — follow this EXACTLY
 
-For EVERY experiment (including the baseline), do ALL of these steps:
+1. Read train.py — understand the current architecture and hyperparameters
+2. Edit train.py with your experimental idea
+3. \`git add train.py && git commit -m "description of change"\`
+4. \`bash run_experiment.sh\`
+5. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
+6. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+7. Get the commit hash: \`git rev-parse --short HEAD\`
+8. **Log the result**: \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
+9. If val_bpb IMPROVED (lower than $BEST_BPB): keep the commit, move on
+10. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-1. Edit train.py with your experimental idea (skip for baseline)
-2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
-3. \`bash run_experiment.sh\`
-4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-5. Get the commit hash: \`git rev-parse --short HEAD\`
-6. **Log the result to results.tsv NOW** — run this command:
-   \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
-   Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
-
-**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 8) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
-Do not manually undo code changes. Do not use python3 -c to edit files.
+**If train.py is broken, run \`bash revert_train.sh\` to restore the last working version.**
 
 ## Start now
-1. Read results.tsv to see what has been done
-2. Read train.py to understand current state
-3. Continue experimenting from where the previous session left off
+1. Read train.py
+2. Begin experimenting — beat val_bpb $BEST_BPB
 RESUMEMD
 
-        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"existing_experiments\": $EXISTING}"
-        echo "  Existing experiments: $EXISTING"
+        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"experiments_before\": $BEFORE_COUNT, \"best_bpb\": \"$BEST_BPB\"}"
+        echo "  Experiments so far: $BEFORE_COUNT"
+        echo "  Best val_bpb:       $BEST_BPB"
         echo "  Cooling down for ${RESTART_COOLDOWN}s..."
         sleep "$RESTART_COOLDOWN"
     fi
 
     echo "  Transcript: $TRANSCRIPT"
     echo ""
+
+    # Context compaction watchdog: after EXPERIMENTS_PER_SESSION new
+    # experiments, kill the agent so the restart loop launches a fresh
+    # session with a clean context window. Polls every 30s.
+    EXPERIMENTS_PER_SESSION=${EXPERIMENTS_PER_SESSION:-30}
+    WATCHDOG_PID=""
+    if [ "$EXPERIMENTS_PER_SESSION" -gt 0 ]; then
+        (
+            while true; do
+                sleep 30
+                CURRENT=$(count_experiments)
+                NEW=$((CURRENT - BEFORE_COUNT))
+                if [ "$NEW" -ge "$EXPERIMENTS_PER_SESSION" ]; then
+                    echo ""
+                    echo "=== Context compaction: $NEW experiments this session (limit: $EXPERIMENTS_PER_SESSION) ==="
+                    echo "Restarting agent for fresh context window..."
+                    log_event "{\"event\": \"context_compaction\", \"session_experiments\": $NEW, \"total_experiments\": $CURRENT}"
+                    pkill -f "claude -p" 2>/dev/null || true
+                    break
+                fi
+            done
+        ) &
+        WATCHDOG_PID=$!
+    fi
 
     # Launch Claude Code with stream-json output
     set +e
@@ -480,34 +615,42 @@ RESUMEMD
     EXIT_CODE=$?
     set -e
 
-    log_event "{\"event\": \"agent_exit\", \"attempt\": $ATTEMPT, \"exit_code\": $EXIT_CODE}"
+    # Clean up watchdog
+    [ -n "$WATCHDOG_PID" ] && kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
 
-    if [ "$EXIT_CODE" -eq 0 ]; then
-        echo ""
-        echo "=== Agent exited cleanly (exit code 0) ==="
-        break
-    fi
+    AFTER_COUNT=$(count_experiments)
+    NEW_EXPERIMENTS=$((AFTER_COUNT - BEFORE_COUNT))
+
+    log_event "{\"event\": \"agent_exit\", \"attempt\": $ATTEMPT, \"exit_code\": $EXIT_CODE, \"new_experiments\": $NEW_EXPERIMENTS, \"total_experiments\": $AFTER_COUNT}"
 
     echo ""
-    echo "=== Agent exited with code $EXIT_CODE ==="
+    echo "=== Agent exited (code $EXIT_CODE, +$NEW_EXPERIMENTS experiments, $AFTER_COUNT total) ==="
 
-    if [ "$ATTEMPT" -gt "$MAX_RESTARTS" ]; then
-        echo "Max restarts ($MAX_RESTARTS) reached. Stopping."
-        log_event "{\"event\": \"agent_max_restarts\", \"attempts\": $ATTEMPT}"
+    # User pressed Ctrl+C — respect it, don't restart
+    if [ "$USER_STOPPED" = true ]; then
+        echo "User interrupted — stopping."
         break
     fi
 
+    # Max restarts reached
+    if [ "$ATTEMPT" -gt "$MAX_RESTARTS" ]; then
+        echo "Max restarts ($MAX_RESTARTS) reached. Stopping."
+        log_event "{\"event\": \"agent_max_restarts\", \"attempts\": $ATTEMPT, \"total_experiments\": $AFTER_COUNT}"
+        break
+    fi
+
+    # Agent is told to NEVER STOP, so any exit is premature — restart
+    echo "Agent stopped prematurely (should run forever). Restarting..."
     echo "Will restart (attempt $((ATTEMPT + 1))/$((MAX_RESTARTS + 1)))..."
 done
 
 echo ""
 echo "=== Agent session complete ==="
-RESULTS_COUNT=0
-if [ -f results.tsv ]; then
-    RESULTS_COUNT=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
-fi
-echo "  Total experiments logged: $RESULTS_COUNT"
-echo "  Transcripts: logs/transcripts/"
+FINAL_COUNT=$(count_experiments)
+echo "  Total experiments logged: $FINAL_COUNT"
+echo "  Restart attempts used:    $ATTEMPT/$((MAX_RESTARTS + 1))"
+echo "  Transcripts:              logs/transcripts/"
 INNEREOF
 )
 
@@ -530,6 +673,7 @@ docker run -it --rm \
     -e HOST_GID="$(id -g)" \
     -e MAX_RESTARTS="$MAX_RESTARTS" \
     -e RESTART_COOLDOWN="$RESTART_COOLDOWN" \
+    -e EXPERIMENTS_PER_SESSION="$EXPERIMENTS_PER_SESSION" \
     -e NCCL_P2P_DISABLE=1 \
     -e TORCH_CUDA_ARCH_LIST=12.0 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \

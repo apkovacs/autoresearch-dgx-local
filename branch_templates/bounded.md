@@ -85,22 +85,25 @@ commit	val_bpb	memory_gb	status	description	timestamp
 
 Run exactly **{max_experiments} experiments** (counting rows you add to results.tsv). After completing {max_experiments} experiments, print "ROUND_COMPLETE" and stop.
 
+**Safety nets**: `bash run_experiment.sh` automatically syntax-checks `train.py` before running. If there is a syntax error, it exits immediately with code 2. If you break `train.py` and can't fix it, run `bash revert_train.sh` to restore the last working version.
+
 For each experiment, follow these steps EXACTLY:
 
 1. Edit `train.py` with your experimental idea (use the Edit tool, NOT python3 -c)
 2. `git add train.py && git commit -m "description of change"`
 3. Run: `bash run_experiment.sh`
-4. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-5. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it after a few tries, give up.
-6. **MANDATORY — Log the result to results.tsv** using the wrapper script:
+4. If exit code is 2 (syntax error): run `bash revert_train.sh`, then fix your edit and retry
+5. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it, run `bash revert_train.sh` and move on.
+7. **MANDATORY — Log the result to results.tsv** using the wrapper script:
    `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION`
    Example: `bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline`
    Do NOT use `>>` redirection — it is blocked by the sandbox. Do NOT skip this step.
    (Do not commit results.tsv — leave it untracked by git)
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
+8. If val_bpb IMPROVED (lower): keep the commit, move on
+9. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
 
-**CRITICAL**: You MUST update results.tsv after EVERY experiment. You MUST use `git reset --hard HEAD~1` to revert failed experiments.
+**CRITICAL**: You MUST update results.tsv after EVERY experiment. You MUST use `git reset --hard HEAD~1` to revert failed experiments. If train.py is broken, run `bash revert_train.sh`.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard.
 

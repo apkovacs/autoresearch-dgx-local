@@ -1,6 +1,6 @@
 # Game Strategies Guide
 
-This document explains the game-theory-inspired strategies available in the autoresearch-dgx meta-research framework. Each strategy orchestrates multiple research branches that cooperate and/or compete to find the lowest `val_bpb`.
+This document explains the game-theory-inspired strategies available in the autoresearch-dgx-local meta-research framework. Each strategy orchestrates multiple research branches that cooperate and/or compete to find the lowest `val_bpb`.
 
 ## Architecture
 
