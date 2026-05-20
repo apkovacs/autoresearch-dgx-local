@@ -121,8 +121,9 @@ This approach is based on [this guide](https://medium.com/@luongnv89/run-claude-
 | Model | Ollama Tag | Size (Q4) | Memory Use | Strengths |
 |---|---|---|---|---|
 | **Qwen3.6 27B** | `qwen3.6:27b` | ~18 GB | Default | Strong code reasoning, instruction following |
-| Gemma 4 27B | `gemma4:27b` | ~16 GB | | Strong general + code capability |
-| Gemma 4 12B | `gemma4:12b` | ~7 GB | | Good capability with more memory headroom |
+| Gemma 4 26B | `gemma4:26b` | ~18 GB | | Strong general + code capability |
+| Gemma 4 E4B | `gemma4:e4b` | ~10 GB | | Good capability with more memory headroom |
+| Gemma 4 E2B | `gemma4:e2b` | ~7 GB | | Lightweight edge model |
 | Qwen 2.5 Coder 14B | `qwen2.5-coder:14b` | ~8 GB | | Purpose-built for code modification |
 | Qwen3 8B | `qwen3:8b` | ~5 GB | | Lightweight, fast inference |
 
@@ -157,10 +158,10 @@ First run downloads the model weights (~16–18 GB for 27B models). Subsequent r
 
 ```bash
 # One-time: different model
-OLLAMA_MODEL=gemma4:27b bash run-dgx-agent.sh
+OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh
 
 # Permanent: set in shell profile
-echo 'export OLLAMA_MODEL=gemma4:27b' >> ~/.bashrc
+echo 'export OLLAMA_MODEL=gemma4:26b' >> ~/.bashrc
 source ~/.bashrc
 bash run-dgx-agent.sh
 ```
@@ -195,17 +196,50 @@ Monitor memory usage with `bash monitor-dgx.sh`. If you see memory pressure, red
 
 ---
 
+### Pre-built Docker Image
+
+Building a custom image bakes in all dependencies (Python packages, Ollama, Claude Code, Node.js) so container launches take seconds instead of minutes:
+
+```bash
+docker build -t autoresearch-dgx .
+DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
+DOCKER_IMAGE=autoresearch-dgx bash run-dgx-game.sh --mode island
+```
+
+The launcher scripts automatically detect the pre-built image and skip installation steps.
+
+---
+
 ## Running the Agent Workflow
 
 The agent follows `program.md`, which instructs it to:
 
 1. Read `train.py` and identify hyperparameters to tune
 2. Make a change and commit it
-3. Run training (`uv run train.py`)
+3. Run training (`bash run_experiment.sh`)
 4. Evaluate the result (`val_bpb`)
-5. Keep or discard the change based on improvement
-6. Repeat indefinitely until manually stopped
+5. Log results (`bash log_result.sh`)
+6. Keep or discard the change based on improvement (git reset for discards)
+7. Repeat indefinitely until manually stopped
 
-The agent logs results to `results.tsv` with columns: experiment name, val_bpb, training time, description, and keep/discard decision.
+The agent logs results to `results.tsv` with columns: commit, val_bpb, memory_gb, status, and description. Two wrapper scripts handle sandbox restrictions:
+- `run_experiment.sh` — runs training and captures output to `run.log`
+- `log_result.sh` — appends results to `results.tsv`
 
-Stop the agent with `Ctrl+C`. All committed experiments are preserved in git history.
+Stop the agent with `Ctrl+C` or `docker stop autoresearch-dgx-agent`. All committed experiments are preserved in git history.
+
+---
+
+## Monitoring
+
+All monitoring runs from a separate terminal on the host while the agent is running:
+
+```bash
+bash monitor-game.sh                    # live dashboard with leaderboard
+bash monitor-game.sh --status           # one-shot snapshot
+bash monitor-game.sh --transcript       # agent activity + training progress
+bash monitor-game.sh --events           # orchestrator event stream
+bash monitor-game.sh --transcript-raw   # raw stream-json output
+```
+
+The `--status` mode shows a quick snapshot of experiments completed, GPU utilization, git state, and whether the agent is actively running. The `--transcript` mode shows agent thinking, tool calls, and live training step/loss progress during the 5-minute training runs.
