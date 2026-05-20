@@ -159,8 +159,52 @@ if [ "$MODE" = "transcript" ]; then
     LATEST=$(find_latest_transcript)
     [ -z "$LATEST" ] && LATEST=$(wait_for_transcript)
     echo "Following: $LATEST"
-    echo "  Showing: thinking | tool calls | agent responses"
+    echo "  Showing: thinking | tool calls | agent responses | training progress"
     echo "---"
+
+    # Also tail run.log for live training progress (runs in background)
+    # Shows compact progress: step count, loss, val_bpb, tokens/sec
+    TRAIN_LOG_PID=""
+    start_training_tail() {
+        local log_path="$1"
+        (run_cmd "tail -f $log_path 2>/dev/null" | \
+            grep --line-buffered -E "^step |^val_bpb:|^training_seconds:|compil" | \
+            while IFS= read -r line; do
+                # Compact: show step lines as progress, key metrics in full
+                case "$line" in
+                    step*)
+                        # Extract step number and show compact progress
+                        step_num=$(echo "$line" | grep -oP 'step \K\d+')
+                        loss=$(echo "$line" | grep -oP 'loss \K[0-9.]+')
+                        tps=$(echo "$line" | grep -oP '[0-9.]+ tokens/sec' | head -1)
+                        printf "\r\033[2m  [training] step %-5s loss %-8s %s\033[0m" \
+                            "$step_num" "$loss" "$tps"
+                        ;;
+                    val_bpb*)
+                        printf "\n\033[32;1m  [result] %s\033[0m\n" "$line"
+                        ;;
+                    training_seconds*)
+                        printf "  [result] %s\n" "$line"
+                        ;;
+                    *ompil*)
+                        printf "\r\033[2m  [training] compiling...\033[0m"
+                        ;;
+                esac
+            done) &
+        TRAIN_LOG_PID=$!
+    }
+
+    # Determine run.log path
+    if [ -z "$RUN_PREFIX" ]; then
+        RUN_LOG="run.log"
+    else
+        RUN_LOG="/workspace/run.log"
+    fi
+    start_training_tail "$RUN_LOG"
+
+    # Clean up background tail on exit
+    trap '[ -n "$TRAIN_LOG_PID" ] && kill $TRAIN_LOG_PID 2>/dev/null; exit' INT TERM EXIT
+
     if [ -n "$FORMATTER" ]; then
         run_cmd "tail -f $LATEST" | python3 "$FORMATTER"
     else

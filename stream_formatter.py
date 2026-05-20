@@ -74,25 +74,24 @@ def format_event(event):
                 else:
                     print(f"{YELLOW}[tool: {name}]{RESET}")
 
-    elif etype == "result":
-        # Tool results — show training-relevant output in full
-        content = event.get("result", "")
-        if isinstance(content, str) and content:
-            lines = content.split("\n")
-            for line in lines:
-                if is_training_output(line):
-                    print(f"  {line}")
-                elif line.strip():
-                    # Show first few non-training lines dimmed
-                    pass  # suppress noise, training output is the priority
+    elif etype == "user":
+        # Tool results come as type: "user" with tool_result content
+        msg = event.get("message", {})
+        for block in msg.get("content", []):
+            if block.get("type") == "tool_result":
+                content = block.get("content", "")
+                is_error = block.get("is_error", False)
+                if is_error and content:
+                    print(f"  {DIM}[error]{RESET} {content[:200]}")
+                elif isinstance(content, str) and content:
+                    lines = content.split("\n")
+                    for line in lines:
+                        if is_training_output(line):
+                            print(f"  {line}")
 
-        # Also check for nested content structures
-        if isinstance(content, dict):
-            stdout = content.get("stdout", "")
-            if stdout:
-                for line in stdout.split("\n"):
-                    if is_training_output(line):
-                        print(f"  {line}")
+    elif etype == "result":
+        # Session-level result (end of conversation)
+        pass
 
     elif etype == "system":
         msg = event.get("message", "")
