@@ -364,7 +364,7 @@ echo ""
 # Launch Claude Code with stream-json output
 # stream_formatter.py saves full JSON to the transcript file while
 # printing formatted output to the terminal (agent activity + training progress)
-claude -p --verbose --output-format stream-json "$(cat program.md)" \
+claude -p --permission-mode dontAsk --verbose --output-format stream-json "$(cat program.md)" \
     2>&1 | python3 stream_formatter.py logs/transcripts/agent.jsonl
 INNEREOF
 )
