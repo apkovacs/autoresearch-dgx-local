@@ -218,7 +218,31 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(echo *)",
       "Bash(nvidia-smi*)"
     ],
-    "deny": []
+    "deny": [
+      "Task",
+      "TaskCreate",
+      "TaskGet",
+      "TaskOutput",
+      "TaskStop",
+      "TaskUpdate",
+      "TaskList",
+      "Monitor",
+      "Agent",
+      "AskUserQuestion",
+      "WebSearch",
+      "WebFetch",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "NotebookEdit",
+      "PushNotification",
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "EnterWorktree",
+      "ExitWorktree",
+      "ScheduleWakeup",
+      "Skill"
+    ]
   }
 }
 SETTINGS
