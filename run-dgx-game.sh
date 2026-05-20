@@ -19,6 +19,7 @@
 #   OLLAMA_MODELS     Host path for persistent Ollama model weights
 #   DOCKER_IMAGE      Base Docker image
 #   SHM_SIZE          Shared memory size
+#   OLLAMA_KEEP_ALIVE Model unload delay after last request (default: 0, unload immediately)
 
 set -euo pipefail
 
@@ -28,6 +29,7 @@ SHARD_CACHE_DIR="${SHARD_CACHE_DIR:-$HOME/.cache/autoresearch}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
+OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 CONTAINER_NAME="autoresearch-dgx-local-game"
 GAME_MODE=""
 GAME_CONFIG="game_config.yaml"
@@ -150,8 +152,10 @@ else
     fi
 fi
 
-# Start Ollama server
+# Start Ollama server (OLLAMA_KEEP_ALIVE=0 unloads model between agent turns,
+# freeing ~18GB GPU memory for training runs)
 echo "[start] Starting Ollama server..."
+export OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE"
 ollama serve &>/dev/null &
 sleep 3
 for i in \$(seq 1 30); do

@@ -20,6 +20,7 @@
 #   OLLAMA_MODELS     Host path for persistent Ollama model weights (default: ~/.ollama/models)
 #   DOCKER_IMAGE      Base Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)
 #   SHM_SIZE          Shared memory size (default: 64gb)
+#   OLLAMA_KEEP_ALIVE Model unload delay after last request (default: 0, unload immediately)
 
 set -euo pipefail
 
@@ -29,6 +30,7 @@ SHARD_CACHE_DIR="${SHARD_CACHE_DIR:-$HOME/.cache/autoresearch}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
+OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 CONTAINER_NAME="autoresearch-dgx-local-agent"
 MAX_RESTARTS=3
 RESTART_COOLDOWN=10
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             echo "  OLLAMA_MODELS    Persistent model weights (default: ~/.ollama/models)"
             echo "  DOCKER_IMAGE     Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)"
             echo "  SHM_SIZE         Shared memory (default: 64gb)"
+            echo "  OLLAMA_KEEP_ALIVE  Model unload delay (default: 0 = unload immediately)"
             echo ""
             echo "Tested models:"
             echo "  qwen3.6:27b          ~18GB  Strong code reasoning (default)"
@@ -100,6 +103,7 @@ echo "  Docker image:     $DOCKER_IMAGE"
 echo "  Shard cache:      $SHARD_CACHE_DIR"
 echo "  Ollama models:    $OLLAMA_MODELS"
 echo "  Shared memory:    $SHM_SIZE"
+echo "  Ollama keep-alive: $OLLAMA_KEEP_ALIVE"
 echo "  Container name:   $CONTAINER_NAME"
 echo "  Max restarts:     $MAX_RESTARTS"
 echo "  Exp/session:      $EXPERIMENTS_PER_SESSION"
@@ -145,8 +149,10 @@ else
     fi
 fi
 
-# Start Ollama server
+# Start Ollama server (OLLAMA_KEEP_ALIVE=0 unloads model between agent turns,
+# freeing ~18GB GPU memory for training runs)
 echo "[start] Starting Ollama server..."
+export OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE"
 ollama serve &>/dev/null &
 OLLAMA_PID=$!
 sleep 3

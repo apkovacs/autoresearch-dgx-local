@@ -141,7 +141,9 @@ With 128 GB unified memory:
 | System / OS | ~2–4 GB | |
 | **Available headroom** | **104–120 GB** | Comfortable margin |
 
-If you increase training parameters (larger DEPTH or DEVICE_BATCH_SIZE), choose a smaller LLM to maintain headroom.
+By default, `OLLAMA_KEEP_ALIVE=0` causes Ollama to unload the model from GPU memory immediately after each agent reasoning turn. During the 5-minute training run, the ~18 GB used by the LLM is freed for PyTorch. The model reloads (~10–30s) when the agent needs to reason again. Set `OLLAMA_KEEP_ALIVE=30s` to keep the model warm for quick back-to-back reasoning, at the cost of less training headroom.
+
+If you increase training parameters (larger DEPTH or DEVICE_BATCH_SIZE), the memory freed by model unloading becomes especially valuable.
 
 ### Model Weight Persistence
 
