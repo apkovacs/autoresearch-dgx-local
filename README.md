@@ -82,12 +82,14 @@ The orchestrator adds a meta-research layer that manages multiple research branc
 
 The agent runs entirely on-device using Ollama. Tested models:
 
-| Model | VRAM headroom | Notes |
-|---|---|---|
-| Qwen3.6 27B (default) | Moderate | Strong reasoning, good default |
-| Gemma 4 27B | Moderate | Competitive alternative |
-| Gemma 4 12B | High | More memory for training |
-| Qwen 2.5 Coder 14B | High | Code-specialized |
+| Model | VRAM headroom | Reliability | Notes |
+|---|---|---|---|
+| Qwen3.6 27B (default) | Moderate | High | Strong reasoning, fewest edit failures |
+| Gemma 4 26B | Moderate | High | Competitive; occasionally imprecise with edits |
+| Gemma 4 12B | High | Medium | More memory headroom; more edit retries |
+| Qwen 2.5 Coder 14B | High | Medium | Precise edits but weaker experiment reasoning |
+
+All local models are less reliable than frontier API models. The launcher scripts include mitigations: syntax validation before training, auto-restart on premature exit, context compaction, and heartbeat output during training runs. See [DGX_SETUP.md](DGX_SETUP.md#local-model-limitations-and-mitigations) for details.
 
 Switch models with:
 ```bash

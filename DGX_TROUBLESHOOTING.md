@@ -195,6 +195,56 @@ The launcher scripts include an EXIT trap that restores `.git` ownership automat
 
 ---
 
+## Agent Edit Failures ("String to replace not found")
+
+**Symptom**: Transcript shows repeated `"String to replace not found in file"` errors when the agent tries to edit `train.py`. The agent retries with slight variations, burning context.
+
+**Cause**: Smaller local models (especially under 14B) are imprecise with the Edit tool's `old_string` parameter. Common mistakes: misquoting comments, adding/removing whitespace, changing punctuation like "as fraction" → "as an fraction".
+
+**Fix**:
+- This is expected behavior with local models. The safety nets handle it:
+  - `run_experiment.sh` syntax-checks before training, so bad edits never waste 5 minutes
+  - `revert_train.sh` restores the last working `train.py`
+- If it happens repeatedly, try a larger or more code-capable model: `OLLAMA_MODEL=qwen3.6:27b`
+- The context compaction watchdog will eventually restart the agent with a clean context
+
+---
+
+## Agent Polls run.log During Training
+
+**Symptom**: Transcript shows the agent running `tail run.log` or `grep val_bpb run.log` repeatedly while training is still in progress, consuming 60-70KB of context per read.
+
+**Cause**: In older versions, `run_experiment.sh` produced no stdout during the ~5 minute training run, so the Bash tool appeared to hang. The agent then tried to check on progress manually.
+
+**Fix**: Update to the latest launcher scripts. `run_experiment.sh` now prints a heartbeat every 30 seconds (`... training 45.2% (120s elapsed)`) to keep the agent informed. It also converts `\r` carriage returns to newlines in `run.log` after training, so subsequent `tail` calls return sensible-sized output.
+
+---
+
+## Agent Stops Prematurely (Exit Code 0)
+
+**Symptom**: The agent runs one or two experiments, then stops and the session ends. No crash — just a clean exit.
+
+**Cause**: Smaller models sometimes describe what they plan to do and then emit an `end_turn` instead of actually doing it. The model treats "I will now..." as task completion.
+
+**Fix**: The auto-restart loop in `run-dgx-agent.sh` treats any exit (including clean exit 0) as premature and relaunches the agent. Only `Ctrl+C` (SIGINT/SIGTERM) stops the loop. The resume CLAUDE.md injects the best `val_bpb` achieved so far as a target to beat, keeping the agent focused.
+
+CLI flags: `--max-restarts N` (default 3), `--no-restart` to disable, `--experiments-per-session N` (default 30, for context compaction).
+
+---
+
+## Agent Introduces Syntax Errors (Tab Characters, Bad Indentation)
+
+**Symptom**: `run_experiment.sh` exits with code 2 and a `SyntaxError` or `IndentationError`. Inspecting `train.py` reveals a literal tab character or misaligned indentation.
+
+**Cause**: Smaller models occasionally emit tab characters instead of spaces, or miscalculate indentation levels when generating Python code.
+
+**Fix**:
+- `run_experiment.sh` catches this instantly with `py_compile` (exit code 2) before wasting training time
+- Run `bash revert_train.sh` to restore the last working version
+- The CLAUDE.md instructions tell the agent to use the Edit tool (not `python3 -c`) for modifications, which is more reliable
+
+---
+
 ## Ollama Model Pull Fails
 
 **Symptom**: `Error: pull model manifest: file does not exist` when pulling a model.
