@@ -178,13 +178,9 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
 {
   "permissions": {
     "allow": [
-      "Edit(/workspace/train.py)",
-      "Read(/workspace/*)",
-      "Read(/cache/autoresearch/*)",
-      "Write(/workspace/results.tsv)",
-      "Write(results.tsv)",
-      "Write(/workspace/run.log)",
-      "Write(run.log)",
+      "Edit",
+      "Read",
+      "Write",
       "Bash(ls /cache/*)",
       "Bash(bash run_experiment.sh*)",
       "Bash(bash log_result.sh*)",
@@ -207,6 +203,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git reset*)",
       "Bash(git rev-parse*)",
       "Bash(grep *)",
+      "Bash(sed *)",
       "Bash(diff *)",
       "Bash(wc *)",
       "Bash(head *)",
@@ -218,7 +215,31 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(echo *)",
       "Bash(nvidia-smi*)"
     ],
-    "deny": []
+    "deny": [
+      "Task",
+      "TaskCreate",
+      "TaskGet",
+      "TaskOutput",
+      "TaskStop",
+      "TaskUpdate",
+      "TaskList",
+      "Monitor",
+      "Agent",
+      "AskUserQuestion",
+      "WebSearch",
+      "WebFetch",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "NotebookEdit",
+      "PushNotification",
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "EnterWorktree",
+      "ExitWorktree",
+      "ScheduleWakeup",
+      "Skill"
+    ]
   }
 }
 SETTINGS
