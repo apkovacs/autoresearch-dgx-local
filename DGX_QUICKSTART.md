@@ -13,7 +13,6 @@ Run a single training experiment:
 ```bash
 git clone https://github.com/apkovacs/autoresearch-dgx-local.git
 cd autoresearch
-git checkout dgx-spark
 bash run-dgx.sh
 ```
 
