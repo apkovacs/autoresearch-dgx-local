@@ -196,6 +196,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(ls /cache/*)",
       "Bash(bash run_experiment.sh*)",
       "Bash(bash log_result.sh*)",
+      "Bash(bash revert_train.sh*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -285,15 +286,56 @@ fi
 # Create experiment runner script (handles output redirect so the agent doesn't need to)
 cat > /workspace/run_experiment.sh << 'RUNEXP'
 #!/usr/bin/env bash
-# Wrapper: runs train.py and captures output to run.log
+# Wrapper: validates train.py, runs it, and captures output to run.log
+# - Syntax-checks before running (catches bad edits instantly)
+# - Saves .train.py.lastgood after each successful run
 # Usage: bash run_experiment.sh
+
+# Step 1: Syntax check — fail fast on bad edits
+echo "Checking train.py syntax..."
+if ! python -c "import py_compile; py_compile.compile('train.py', doraise=True)" 2> /tmp/syntax_err.txt; then
+    echo "=== SYNTAX ERROR in train.py ==="
+    cat /tmp/syntax_err.txt
+    echo ""
+    echo "Fix the error or run: bash revert_train.sh"
+    exit 2
+fi
+
+# Step 2: Run training
 python train.py > run.log 2>&1
 exit_code=$?
 echo "=== Experiment finished (exit code: $exit_code) ==="
 grep "^val_bpb:\|^peak_vram_mb:\|^training_seconds:" run.log 2>/dev/null || echo "(no metrics found — check run.log for errors)"
+
+# Step 3: Save last-good backup if training produced results
+if grep -q "^val_bpb:" run.log 2>/dev/null; then
+    cp train.py .train.py.lastgood
+fi
+
 exit $exit_code
 RUNEXP
 chmod +x /workspace/run_experiment.sh
+
+# Create revert script (restores train.py from last-good backup)
+cat > /workspace/revert_train.sh << 'REVERT'
+#!/usr/bin/env bash
+# Restores train.py from the last successful version.
+# Usage: bash revert_train.sh
+if [ -f .train.py.lastgood ]; then
+    cp .train.py.lastgood train.py
+    echo "Reverted train.py to last working version."
+    echo "Diff from current git HEAD:"
+    git diff train.py 2>/dev/null | head -30
+else
+    echo "No .train.py.lastgood found. Reverting to git HEAD instead."
+    git checkout -- train.py
+    echo "Reverted train.py to last committed version."
+fi
+REVERT
+chmod +x /workspace/revert_train.sh
+
+# Save initial train.py as the first last-good backup
+cp /workspace/train.py /workspace/.train.py.lastgood
 
 # Create results logger script (>> redirect is blocked by Claude Code sandbox)
 cat > /workspace/log_result.sh << 'LOGEXP'
@@ -336,6 +378,11 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 Only train.py — this is the single file you should edit.
 Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
 
+## Safety nets
+- \`bash run_experiment.sh\` **automatically syntax-checks** train.py before running. If there is a syntax error, it will tell you immediately (exit code 2) without wasting training time.
+- If you break train.py, run \`bash revert_train.sh\` to restore the last working version.
+- After each successful training run, train.py is backed up automatically.
+
 ## Experiment loop — follow this EXACTLY
 
 For EVERY experiment (including the baseline), do ALL of these steps:
@@ -343,22 +390,24 @@ For EVERY experiment (including the baseline), do ALL of these steps:
 1. Edit train.py with your experimental idea (skip for baseline)
 2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
 3. \`bash run_experiment.sh\`
-4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-5. Get the commit hash: \`git rev-parse --short HEAD\`
-6. **Log the result to results.tsv NOW** — run this command:
+4. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
+5. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+6. Get the commit hash: \`git rev-parse --short HEAD\`
+7. **Log the result to results.tsv NOW** — run this command:
    \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
    Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+8. If val_bpb IMPROVED (lower): keep the commit, move on
+9. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 7) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
+**If train.py is broken, run \`bash revert_train.sh\` to restore the last working version.**
 Do not manually undo code changes. Do not use python3 -c to edit files.
 
 ## Start now
 1. Read train.py
 2. Run the baseline: \`bash run_experiment.sh\`
-3. Log the baseline to results.tsv (step 6 above)
+3. Log the baseline to results.tsv (step 7 above)
 4. Begin experimenting
 CLAUDEMD
 
@@ -447,6 +496,11 @@ Do NOT repeat experiments that are already logged.
 Only train.py — this is the single file you should edit.
 Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
 
+## Safety nets
+- \`bash run_experiment.sh\` **automatically syntax-checks** train.py before running. If there is a syntax error, it will tell you immediately (exit code 2) without wasting training time.
+- If you break train.py, run \`bash revert_train.sh\` to restore the last working version.
+- After each successful training run, train.py is backed up automatically.
+
 ## Experiment loop — follow this EXACTLY
 
 For EVERY experiment (including the baseline), do ALL of these steps:
@@ -454,16 +508,18 @@ For EVERY experiment (including the baseline), do ALL of these steps:
 1. Edit train.py with your experimental idea (skip for baseline)
 2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
 3. \`bash run_experiment.sh\`
-4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-5. Get the commit hash: \`git rev-parse --short HEAD\`
-6. **Log the result to results.tsv NOW** — run this command:
+4. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
+5. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+6. Get the commit hash: \`git rev-parse --short HEAD\`
+7. **Log the result to results.tsv NOW** — run this command:
    \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
    Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
+8. If val_bpb IMPROVED (lower): keep the commit, move on
+9. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 7) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
+**If train.py is broken, run \`bash revert_train.sh\` to restore the last working version.**
 Do not manually undo code changes. Do not use python3 -c to edit files.
 
 ## Start now

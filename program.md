@@ -92,20 +92,23 @@ d4e5f6g	0.000000	0.0	crash	double model width (OOM)	2026-05-20T08:32:10Z
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
 
+**Safety nets**: `bash run_experiment.sh` automatically syntax-checks `train.py` before running. If there is a syntax error, it exits immediately with code 2. If you break `train.py` and can't fix it, run `bash revert_train.sh` to restore the last working version.
+
 LOOP FOREVER — follow these steps EXACTLY for each experiment:
 
 1. Edit `train.py` with your experimental idea (use the Edit tool, NOT python3 -c)
 2. `git add train.py && git commit -m "description of change"`
 3. Run: `bash run_experiment.sh`
-4. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-5. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it after a few tries, give up.
-6. **MANDATORY — Log the result to results.tsv** using the wrapper script:
+4. If exit code is 2 (syntax error): run `bash revert_train.sh`, then fix your edit and retry
+5. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it, run `bash revert_train.sh` and move on.
+7. **MANDATORY — Log the result to results.tsv** using the wrapper script:
    `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION`
    Example: `bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline`
    Do NOT use `>>` redirection — it is blocked by the sandbox. Do NOT skip this step.
    (Do not commit results.tsv — leave it untracked by git)
-7. If val_bpb IMPROVED (lower): keep the commit, move on
-8. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
+8. If val_bpb IMPROVED (lower): keep the commit, move on
+9. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 

@@ -18,6 +18,8 @@ AGENTS.md
 _round_prompt.md
 run_experiment.sh
 log_result.sh
+revert_train.sh
+.train.py.lastgood
 run.log
 
 # Experimental code/artifacts
