@@ -293,8 +293,10 @@ cat > /workspace/run_experiment.sh << 'RUNEXP'
 #!/usr/bin/env bash
 # Wrapper: validates train.py, runs it, and captures output to run.log
 # - Syntax-checks before running (catches bad edits instantly)
+# - Prints heartbeat every 30s so the Bash tool does not time out
 # - Saves .train.py.lastgood after each successful run
 # Usage: bash run_experiment.sh
+# Takes ~5 minutes. Do NOT poll run.log — just wait for this to finish.
 
 # Step 1: Syntax check — fail fast on bad edits
 echo "Checking train.py syntax..."
@@ -306,13 +308,36 @@ if ! python -c "import py_compile; py_compile.compile('train.py', doraise=True)"
     exit 2
 fi
 
-# Step 2: Run training
-python train.py > run.log 2>&1
+# Step 2: Run training in background, heartbeat to keep Bash tool alive
+echo "Training started — this takes ~5 minutes. Wait for results below."
+python train.py > run.log 2>&1 &
+TRAIN_PID=$!
+
+# Heartbeat: print progress every 30s so the tool doesn't time out
+SECONDS_ELAPSED=0
+while kill -0 $TRAIN_PID 2>/dev/null; do
+    sleep 30
+    SECONDS_ELAPSED=$((SECONDS_ELAPSED + 30))
+    # Show latest progress from run.log (last step line)
+    LATEST=$(grep -oP '\d+\.\d+%' run.log 2>/dev/null | tail -1)
+    echo "  ... training ${LATEST:-starting} (${SECONDS_ELAPSED}s elapsed)"
+done
+
+# Collect exit code
+wait $TRAIN_PID
 exit_code=$?
+
+# Step 3: Clean run.log — training uses \r for progress, making the file
+# appear as one huge line. Replace \r with \n so tail/head work properly.
+if [ -f run.log ]; then
+    tr '\r' '\n' < run.log | grep -v '^$' > run.log.tmp && mv run.log.tmp run.log
+fi
+
+# Step 4: Print results
 echo "=== Experiment finished (exit code: $exit_code) ==="
 grep "^val_bpb:\|^peak_vram_mb:\|^training_seconds:" run.log 2>/dev/null || echo "(no metrics found — check run.log for errors)"
 
-# Step 3: Save last-good backup if training produced results
+# Step 5: Save last-good backup if training produced results
 if grep -q "^val_bpb:" run.log 2>/dev/null; then
     cp train.py .train.py.lastgood
 fi
@@ -374,6 +399,7 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
 - Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
+- **\`bash run_experiment.sh\` takes ~5 minutes** — it prints heartbeat progress every 30s. Just wait for it to finish. Do NOT check run.log while it is running.
 - Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results (timestamp added automatically)
 - Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
@@ -521,13 +547,14 @@ Do NOT re-run the baseline if it has already been run (check above).
 
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
+- **\`bash run_experiment.sh\` takes ~5 minutes** — it prints heartbeat progress every 30s. Just wait for it to finish. Do NOT check run.log while it is running.
 - Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
 
 ## Available commands
 Wrapper scripts (use these, not raw commands):
-- \`bash run_experiment.sh\` — syntax-check + train + save backup
+- \`bash run_experiment.sh\` — syntax-check + train + save backup (~5 min, prints heartbeat)
 - \`bash log_result.sh COMMIT BPB MEM STATUS DESC\` — log to results.tsv
 - \`bash revert_train.sh\` — restore last working train.py
 
