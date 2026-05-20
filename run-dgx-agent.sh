@@ -395,23 +395,31 @@ echo "    bash monitor-game.sh --events       (event stream)"
 echo ""
 
 # --- Agent launch with auto-restart ---
+# The agent is instructed to NEVER STOP. Any exit — clean or crash — is
+# premature and should trigger a restart, UNLESS the user sent Ctrl+C.
 MAX_RESTARTS=${MAX_RESTARTS:-3}
 RESTART_COOLDOWN=${RESTART_COOLDOWN:-10}
 ATTEMPT=0
+USER_STOPPED=false
+
+trap 'USER_STOPPED=true' INT TERM
+
+count_experiments() {
+    if [ -f results.tsv ]; then
+        tail -n +2 results.tsv | wc -l | tr -d ' '
+    else
+        echo 0
+    fi
+}
 
 while true; do
     ATTEMPT=$((ATTEMPT + 1))
     TRANSCRIPT="logs/transcripts/agent_$(date -u +%Y%m%dT%H%M%SZ).jsonl"
+    BEFORE_COUNT=$(count_experiments)
 
     if [ "$ATTEMPT" -gt 1 ]; then
         echo ""
         echo "=== Agent restart (attempt $ATTEMPT/$((MAX_RESTARTS + 1))) ==="
-
-        # Count existing experiments so the agent knows where it left off
-        EXISTING=0
-        if [ -f results.tsv ]; then
-            EXISTING=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
-        fi
 
         # Update CLAUDE.md for resume context
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -420,7 +428,7 @@ while true; do
 
 ## RESUMING — you are restarting after a previous session ended
 - Branch: $CURRENT_BRANCH
-- Experiments completed so far: $EXISTING (check results.tsv for details)
+- Experiments completed so far: $BEFORE_COUNT (check results.tsv for details)
 - Data: pre-downloaded at /cache/autoresearch
 
 **Read results.tsv first** to see what has already been tried, then continue experimenting.
@@ -464,8 +472,8 @@ Do not manually undo code changes. Do not use python3 -c to edit files.
 3. Continue experimenting from where the previous session left off
 RESUMEMD
 
-        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"existing_experiments\": $EXISTING}"
-        echo "  Existing experiments: $EXISTING"
+        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"experiments_before\": $BEFORE_COUNT}"
+        echo "  Experiments so far: $BEFORE_COUNT"
         echo "  Cooling down for ${RESTART_COOLDOWN}s..."
         sleep "$RESTART_COOLDOWN"
     fi
@@ -480,34 +488,38 @@ RESUMEMD
     EXIT_CODE=$?
     set -e
 
-    log_event "{\"event\": \"agent_exit\", \"attempt\": $ATTEMPT, \"exit_code\": $EXIT_CODE}"
+    AFTER_COUNT=$(count_experiments)
+    NEW_EXPERIMENTS=$((AFTER_COUNT - BEFORE_COUNT))
 
-    if [ "$EXIT_CODE" -eq 0 ]; then
-        echo ""
-        echo "=== Agent exited cleanly (exit code 0) ==="
-        break
-    fi
+    log_event "{\"event\": \"agent_exit\", \"attempt\": $ATTEMPT, \"exit_code\": $EXIT_CODE, \"new_experiments\": $NEW_EXPERIMENTS, \"total_experiments\": $AFTER_COUNT}"
 
     echo ""
-    echo "=== Agent exited with code $EXIT_CODE ==="
+    echo "=== Agent exited (code $EXIT_CODE, +$NEW_EXPERIMENTS experiments, $AFTER_COUNT total) ==="
 
-    if [ "$ATTEMPT" -gt "$MAX_RESTARTS" ]; then
-        echo "Max restarts ($MAX_RESTARTS) reached. Stopping."
-        log_event "{\"event\": \"agent_max_restarts\", \"attempts\": $ATTEMPT}"
+    # User pressed Ctrl+C — respect it, don't restart
+    if [ "$USER_STOPPED" = true ]; then
+        echo "User interrupted — stopping."
         break
     fi
 
+    # Max restarts reached
+    if [ "$ATTEMPT" -gt "$MAX_RESTARTS" ]; then
+        echo "Max restarts ($MAX_RESTARTS) reached. Stopping."
+        log_event "{\"event\": \"agent_max_restarts\", \"attempts\": $ATTEMPT, \"total_experiments\": $AFTER_COUNT}"
+        break
+    fi
+
+    # Agent is told to NEVER STOP, so any exit is premature — restart
+    echo "Agent stopped prematurely (should run forever). Restarting..."
     echo "Will restart (attempt $((ATTEMPT + 1))/$((MAX_RESTARTS + 1)))..."
 done
 
 echo ""
 echo "=== Agent session complete ==="
-RESULTS_COUNT=0
-if [ -f results.tsv ]; then
-    RESULTS_COUNT=$(tail -n +2 results.tsv | wc -l | tr -d ' ')
-fi
-echo "  Total experiments logged: $RESULTS_COUNT"
-echo "  Transcripts: logs/transcripts/"
+FINAL_COUNT=$(count_experiments)
+echo "  Total experiments logged: $FINAL_COUNT"
+echo "  Restart attempts used:    $ATTEMPT/$((MAX_RESTARTS + 1))"
+echo "  Transcripts:              logs/transcripts/"
 INNEREOF
 )
 
