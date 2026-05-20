@@ -203,7 +203,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git diff*)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git log*)",
+      "Bash(git log --oneline*)",
       "Bash(git checkout *)",
       "Bash(git branch*)",
       "Bash(git stash*)",

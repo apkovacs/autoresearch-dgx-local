@@ -32,6 +32,7 @@ SHM_SIZE="${SHM_SIZE:-64gb}"
 CONTAINER_NAME="autoresearch-dgx-agent"
 MAX_RESTARTS=3
 RESTART_COOLDOWN=10
+EXPERIMENTS_PER_SESSION=30
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -40,15 +41,18 @@ while [[ $# -gt 0 ]]; do
             MAX_RESTARTS="$2"; shift 2 ;;
         --no-restart)
             MAX_RESTARTS=0; shift ;;
+        --experiments-per-session)
+            EXPERIMENTS_PER_SESSION="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [-h|--help]"
+            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [--experiments-per-session N] [-h|--help]"
             echo ""
             echo "Launches the autonomous autoresearch agent with a local LLM."
             echo ""
             echo "Options:"
-            echo "  --max-restarts N  Auto-restart agent up to N times on crash (default: 3)"
-            echo "  --no-restart      Disable auto-restart (exit on first crash)"
-            echo "  -h, --help        Show this help"
+            echo "  --max-restarts N             Auto-restart agent up to N times (default: 3)"
+            echo "  --no-restart                 Disable auto-restart (exit on first stop)"
+            echo "  --experiments-per-session N   Restart for fresh context after N experiments (default: 30)"
+            echo "  -h, --help                   Show this help"
             echo ""
             echo "Environment variables:"
             echo "  OLLAMA_MODEL     Model to use (default: qwen3.6:27b)"
@@ -98,6 +102,7 @@ echo "  Ollama models:    $OLLAMA_MODELS"
 echo "  Shared memory:    $SHM_SIZE"
 echo "  Container name:   $CONTAINER_NAME"
 echo "  Max restarts:     $MAX_RESTARTS"
+echo "  Exp/session:      $EXPERIMENTS_PER_SESSION"
 echo ""
 
 # --- Build the in-container setup script ---
@@ -207,7 +212,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Bash(git diff*)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git log*)",
+      "Bash(git log --oneline*)",
       "Bash(git checkout *)",
       "Bash(git branch*)",
       "Bash(git stash*)",
@@ -374,6 +379,24 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
 
+## Available commands
+Wrapper scripts (use these, not raw commands):
+- \`bash run_experiment.sh\` — syntax-check + train + save backup
+- \`bash log_result.sh COMMIT BPB MEM STATUS DESC\` — log to results.tsv
+- \`bash revert_train.sh\` — restore last working train.py
+
+Git (only these forms work):
+- \`git add train.py && git commit -m "msg"\` — commit changes
+- \`git diff train.py\` — see uncommitted changes
+- \`git log --oneline -5\` — recent commits (MUST use --oneline)
+- \`git reset --hard HEAD~1\` — revert last commit
+- \`git rev-parse --short HEAD\` — get commit hash
+- \`git status\` — check working tree
+
+Reading files:
+- \`grep "^val_bpb:\|^peak_vram_mb:" run.log\` — get experiment results
+- \`tail -n 50 run.log\` — read error output from failed runs
+
 ## What you can modify
 Only train.py — this is the single file you should edit.
 Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
@@ -486,11 +509,27 @@ Do NOT repeat experiments that are already logged.
 
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
-- Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
-- Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results (timestamp added automatically)
 - Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
 - Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
+
+## Available commands
+Wrapper scripts (use these, not raw commands):
+- \`bash run_experiment.sh\` — syntax-check + train + save backup
+- \`bash log_result.sh COMMIT BPB MEM STATUS DESC\` — log to results.tsv
+- \`bash revert_train.sh\` — restore last working train.py
+
+Git (only these forms work):
+- \`git add train.py && git commit -m "msg"\` — commit changes
+- \`git diff train.py\` — see uncommitted changes
+- \`git log --oneline -5\` — recent commits (MUST use --oneline)
+- \`git reset --hard HEAD~1\` — revert last commit
+- \`git rev-parse --short HEAD\` — get commit hash
+- \`git status\` — check working tree
+
+Reading files:
+- \`grep "^val_bpb:\|^peak_vram_mb:" run.log\` — get experiment results
+- \`tail -n 50 run.log\` — read error output from failed runs
 
 ## What you can modify
 Only train.py — this is the single file you should edit.
@@ -537,12 +576,40 @@ RESUMEMD
     echo "  Transcript: $TRANSCRIPT"
     echo ""
 
+    # Context compaction watchdog: after EXPERIMENTS_PER_SESSION new
+    # experiments, kill the agent so the restart loop launches a fresh
+    # session with a clean context window. Polls every 30s.
+    EXPERIMENTS_PER_SESSION=${EXPERIMENTS_PER_SESSION:-30}
+    WATCHDOG_PID=""
+    if [ "$EXPERIMENTS_PER_SESSION" -gt 0 ]; then
+        (
+            while true; do
+                sleep 30
+                CURRENT=$(count_experiments)
+                NEW=$((CURRENT - BEFORE_COUNT))
+                if [ "$NEW" -ge "$EXPERIMENTS_PER_SESSION" ]; then
+                    echo ""
+                    echo "=== Context compaction: $NEW experiments this session (limit: $EXPERIMENTS_PER_SESSION) ==="
+                    echo "Restarting agent for fresh context window..."
+                    log_event "{\"event\": \"context_compaction\", \"session_experiments\": $NEW, \"total_experiments\": $CURRENT}"
+                    pkill -f "claude -p" 2>/dev/null || true
+                    break
+                fi
+            done
+        ) &
+        WATCHDOG_PID=$!
+    fi
+
     # Launch Claude Code with stream-json output
     set +e
     claude -p --permission-mode dontAsk --verbose --output-format stream-json "$(cat program.md)" \
         2>&1 | python3 stream_formatter.py "$TRANSCRIPT"
     EXIT_CODE=$?
     set -e
+
+    # Clean up watchdog
+    [ -n "$WATCHDOG_PID" ] && kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
 
     AFTER_COUNT=$(count_experiments)
     NEW_EXPERIMENTS=$((AFTER_COUNT - BEFORE_COUNT))
@@ -598,6 +665,7 @@ docker run -it --rm \
     -e HOST_GID="$(id -g)" \
     -e MAX_RESTARTS="$MAX_RESTARTS" \
     -e RESTART_COOLDOWN="$RESTART_COOLDOWN" \
+    -e EXPERIMENTS_PER_SESSION="$EXPERIMENTS_PER_SESSION" \
     -e NCCL_P2P_DISABLE=1 \
     -e TORCH_CUDA_ARCH_LIST=12.0 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
