@@ -493,19 +493,31 @@ while true; do
         echo ""
         echo "=== Agent restart (attempt $ATTEMPT/$((MAX_RESTARTS + 1))) ==="
 
-        # Update CLAUDE.md for resume context
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        # Extract best and baseline val_bpb from results.tsv
+        BEST_BPB="unknown"
+        BASELINE_BPB="unknown"
+        HAS_BASELINE=false
+        if [ -f results.tsv ]; then
+            # Best val_bpb among kept experiments (lowest non-zero value)
+            BEST_BPB=$(awk -F'\t' 'NR>1 && $4=="keep" && $2+0>0 {print $2}' results.tsv | sort -n | head -1)
+            [ -z "$BEST_BPB" ] && BEST_BPB="unknown"
+            # Baseline is the first row with "baseline" in description
+            BASELINE_BPB=$(awk -F'\t' 'NR>1 && $5~/baseline/ {print $2; exit}' results.tsv)
+            [ -n "$BASELINE_BPB" ] && HAS_BASELINE=true || BASELINE_BPB="not yet run"
+        fi
+
+        # Update CLAUDE.md for resume — forward-looking, no history
         cat > /workspace/CLAUDE.md << RESUMEMD
 # Environment Notes — READ THIS FIRST
 
-## RESUMING — you are restarting after a previous session ended
-- Branch: $CURRENT_BRANCH
-- Experiments completed so far: $BEFORE_COUNT (check results.tsv for details)
-- Data: pre-downloaded at /cache/autoresearch
+## Current state
+- Baseline val_bpb: $BASELINE_BPB
+- Best val_bpb so far: $BEST_BPB (this is the number to beat)
+- Experiments completed: $BEFORE_COUNT
+- train.py reflects the best version so far — read it and improve from here
 
-**Read results.tsv first** to see what has already been tried, then continue experimenting.
-Do NOT re-run the baseline if results.tsv already has a baseline row.
-Do NOT repeat experiments that are already logged.
+$([ "$HAS_BASELINE" = false ] && echo "The baseline has NOT been run yet. Run it first: \`bash run_experiment.sh\`")
+Do NOT re-run the baseline if it has already been run (check above).
 
 ## IMPORTANT: Rules
 - Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
@@ -542,33 +554,29 @@ Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
 
 ## Experiment loop — follow this EXACTLY
 
-For EVERY experiment (including the baseline), do ALL of these steps:
+1. Read train.py — understand the current architecture and hyperparameters
+2. Edit train.py with your experimental idea
+3. \`git add train.py && git commit -m "description of change"\`
+4. \`bash run_experiment.sh\`
+5. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
+6. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
+7. Get the commit hash: \`git rev-parse --short HEAD\`
+8. **Log the result**: \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
+9. If val_bpb IMPROVED (lower than $BEST_BPB): keep the commit, move on
+10. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-1. Edit train.py with your experimental idea (skip for baseline)
-2. \`git add train.py && git commit -m "description of change"\` (skip for baseline)
-3. \`bash run_experiment.sh\`
-4. If exit code is 2 (syntax error): run \`bash revert_train.sh\`, then fix your edit and retry
-5. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
-6. Get the commit hash: \`git rev-parse --short HEAD\`
-7. **Log the result to results.tsv NOW** — run this command:
-   \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
-   Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
-8. If val_bpb IMPROVED (lower): keep the commit, move on
-9. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
-
-**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 7) to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 8) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
 **If train.py is broken, run \`bash revert_train.sh\` to restore the last working version.**
-Do not manually undo code changes. Do not use python3 -c to edit files.
 
 ## Start now
-1. Read results.tsv to see what has been done
-2. Read train.py to understand current state
-3. Continue experimenting from where the previous session left off
+1. Read train.py
+2. Begin experimenting — beat val_bpb $BEST_BPB
 RESUMEMD
 
-        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"experiments_before\": $BEFORE_COUNT}"
+        log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"experiments_before\": $BEFORE_COUNT, \"best_bpb\": \"$BEST_BPB\"}"
         echo "  Experiments so far: $BEFORE_COUNT"
+        echo "  Best val_bpb:       $BEST_BPB"
         echo "  Cooling down for ${RESTART_COOLDOWN}s..."
         sleep "$RESTART_COOLDOWN"
     fi
