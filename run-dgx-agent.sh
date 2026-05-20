@@ -290,11 +290,12 @@ cat > /workspace/CLAUDE.md << CLAUDEMD
 
 Do NOT run the Setup section of program.md. Go directly to the Experimentation loop.
 
-## IMPORTANT: Command differences from program.md
+## IMPORTANT: Rules
+- Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
 - Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
 - Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results
 - Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
-- Use \`python train.py\` instead of \`uv run train.py\` (there is no uv in this environment)
+- Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
 - Data is already prepared — do NOT run prepare.py
 
 ## What you can modify
