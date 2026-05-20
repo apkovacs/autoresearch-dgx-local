@@ -147,12 +147,15 @@ if [ "$MODE" = "status" ]; then
     echo "  ── Training ──"
     if run_cmd "pgrep -af 'python train.py'" 2>/dev/null | grep -q train; then
         echo "  Status: RUNNING"
-        LAST_STEP=$(run_cmd "grep '^step ' run.log 2>/dev/null | tail -1" 2>/dev/null)
+        # train.py uses \r for in-place updates, so convert to \n before grepping
+        LAST_STEP=$(run_cmd "tr '\r' '\n' < run.log 2>/dev/null | grep 'step [0-9]' | tail -1" 2>/dev/null)
         if [ -n "$LAST_STEP" ]; then
+            # Trim extra whitespace
+            LAST_STEP=$(echo "$LAST_STEP" | sed 's/  */ /g')
             echo "  $LAST_STEP"
         fi
     else
-        LAST_BPB=$(run_cmd "grep '^val_bpb:' run.log 2>/dev/null | tail -1" 2>/dev/null)
+        LAST_BPB=$(run_cmd "grep 'val_bpb:' run.log 2>/dev/null | tail -1" 2>/dev/null)
         if [ -n "$LAST_BPB" ]; then
             echo "  Status: idle (last run finished)"
             echo "  $LAST_BPB"
@@ -247,28 +250,25 @@ if [ "$MODE" = "transcript" ]; then
     echo "---"
 
     # Also tail run.log for live training progress (runs in background)
-    # Shows compact progress: step count, loss, val_bpb, tokens/sec
+    # train.py uses \r for in-place step updates, so we pipe through
+    # tr to convert \r to \n, then filter for progress lines.
     TRAIN_LOG_PID=""
     start_training_tail() {
         local log_path="$1"
-        (run_cmd "tail -f $log_path 2>/dev/null" | \
-            grep --line-buffered -E "^step |^val_bpb:|^training_seconds:|compil" | \
+        (run_cmd "tail -f $log_path 2>/dev/null" | tr '\r' '\n' | \
+            grep --line-buffered -E "step [0-9]|val_bpb:|training_seconds:|compil" | \
             while IFS= read -r line; do
-                # Compact: show step lines as progress, key metrics in full
                 case "$line" in
-                    step*)
-                        # Extract step number and show compact progress
-                        step_num=$(echo "$line" | grep -oP 'step \K\d+')
-                        loss=$(echo "$line" | grep -oP 'loss \K[0-9.]+')
-                        tps=$(echo "$line" | grep -oP '[0-9.]+ tokens/sec' | head -1)
-                        printf "\r\033[2m  [training] step %-5s loss %-8s %s\033[0m" \
-                            "$step_num" "$loss" "$tps"
-                        ;;
-                    val_bpb*)
+                    *val_bpb*)
                         printf "\n\033[32;1m  [result] %s\033[0m\n" "$line"
                         ;;
-                    training_seconds*)
+                    *training_seconds*)
                         printf "  [result] %s\n" "$line"
+                        ;;
+                    *step\ [0-9]*)
+                        # Compact: show the step line trimmed
+                        clean=$(echo "$line" | sed 's/  */ /g' | cut -c1-80)
+                        printf "\r\033[2m  [training] %s\033[0m" "$clean"
                         ;;
                     *ompil*)
                         printf "\r\033[2m  [training] compiling...\033[0m"
