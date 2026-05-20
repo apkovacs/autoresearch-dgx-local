@@ -98,9 +98,10 @@ LOOP FOREVER — follow these steps EXACTLY for each experiment:
 3. Run: `bash run_experiment.sh`
 4. Read results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
 5. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix. If you can't fix it after a few tries, give up.
-6. **MANDATORY — Log the result to results.tsv** by appending a tab-separated row:
-   `echo -e "COMMIT\tVAL_BPB\tMEMORY_GB\tSTATUS\tDESCRIPTION" >> results.tsv`
-   Replace COMMIT with the 7-char git hash, fill in actual values. Do NOT skip this step.
+6. **MANDATORY — Log the result to results.tsv** using the wrapper script:
+   `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION`
+   Example: `bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline`
+   Do NOT use `>>` redirection — it is blocked by the sandbox. Do NOT skip this step.
    (Do not commit results.tsv — leave it untracked by git)
 7. If val_bpb IMPROVED (lower): keep the commit, move on
 8. If val_bpb is equal or worse: **run `git reset --hard HEAD~1`** to revert. Do NOT manually undo code changes.
