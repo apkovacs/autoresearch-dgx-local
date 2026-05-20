@@ -77,6 +77,7 @@ See [DGX_SETUP.md](DGX_SETUP.md) for the full model selection guide.
 - **No sliding window attention**: SDPA ignores `window_size`. All layers use full-context attention.
 - **Approximate MFU**: The GB10 BF16 peak FLOPS (~209 TFLOPS) is approximate. Use `val_bpb` as the authoritative metric.
 - **Single GPU only**: The DGX Spark has one GPU. Multi-GPU features are not applicable.
+- **Local model agent quality**: Locally-hosted models (26-27B) are less reliable than frontier API models at code editing and long-horizon instruction following. The launcher scripts include extensive mitigations (syntax validation, auto-restart, context compaction, heartbeat output). See [DGX_SETUP.md](DGX_SETUP.md#local-model-limitations-and-mitigations) for details.
 
 ## Attribution
 

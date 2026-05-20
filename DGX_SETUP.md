@@ -118,14 +118,14 @@ This approach is based on [this guide](https://medium.com/@luongnv89/run-claude-
 
 ### Model Selection Guide
 
-| Model | Ollama Tag | Size (Q4) | Memory Use | Strengths |
-|---|---|---|---|---|
-| **Qwen3.6 27B** | `qwen3.6:27b` | ~18 GB | Default | Strong code reasoning, instruction following |
-| Gemma 4 26B | `gemma4:26b` | ~18 GB | | Strong general + code capability |
-| Gemma 4 E4B | `gemma4:e4b` | ~10 GB | | Good capability with more memory headroom |
-| Gemma 4 E2B | `gemma4:e2b` | ~7 GB | | Lightweight edge model |
-| Qwen 2.5 Coder 14B | `qwen2.5-coder:14b` | ~8 GB | | Purpose-built for code modification |
-| Qwen3 8B | `qwen3:8b` | ~5 GB | | Lightweight, fast inference |
+| Model | Ollama Tag | Size (Q4) | Memory Use | Reliability | Notes |
+|---|---|---|---|---|---|
+| **Qwen3.6 27B** | `qwen3.6:27b` | ~18 GB | Default | High | Strong code reasoning, fewest edit failures |
+| Gemma 4 26B | `gemma4:26b` | ~18 GB | | High | Strong general + code; occasional edit imprecision |
+| Gemma 4 E4B | `gemma4:e4b` | ~10 GB | | Medium | More memory headroom; more edit retries needed |
+| Gemma 4 E2B | `gemma4:e2b` | ~7 GB | | Low | Lightweight; struggles with multi-step loops |
+| Qwen 2.5 Coder 14B | `qwen2.5-coder:14b` | ~8 GB | | Medium | Precise edits but weaker experiment reasoning |
+| Qwen3 8B | `qwen3:8b` | ~5 GB | | Low | Lightweight; may not sustain the experiment loop |
 
 Any Ollama-compatible model works — just set `OLLAMA_MODEL` to its tag.
 
@@ -178,6 +178,24 @@ OLLAMA_MODEL=llama3.1:70b bash run-dgx-agent.sh  # if you have the memory
 
 The model needs to handle code modification and instruction following. Models under ~8B parameters may struggle with the complexity of the experiment loop.
 
+### Local Model Limitations and Mitigations
+
+Running the experiment loop with locally-hosted models (rather than frontier API models) surfaces predictable failure modes. The launcher scripts include mitigations for all of these, but understanding them helps when choosing a model or debugging agent behavior.
+
+**Edit tool accuracy.** Smaller models frequently get the `old_string` wrong when using the Edit tool — introducing extra whitespace, misquoting comments, or changing punctuation slightly. This causes "String to replace not found" errors and wastes context on retries. The `run_experiment.sh` wrapper syntax-checks `train.py` before training so a bad edit never wastes a 5-minute training run, and `revert_train.sh` provides one-command recovery.
+
+**Context window exhaustion.** Local models have limited context windows (typically 32K-128K tokens). Context fills fast when the agent: reads verbose git log output (~40K tokens), reads `run.log` via `tail` (60-73KB due to `\r` carriage returns in training progress), or retries failed edits repeatedly. Mitigations: git log is restricted to `--oneline` in the permission list; `run_experiment.sh` converts `\r` to `\n` in `run.log` after training; the context compaction watchdog restarts the agent every N experiments for a fresh window.
+
+**Premature exit.** Smaller models sometimes describe their plan then stop (exit code 0) instead of executing it. The auto-restart loop treats any exit as premature (since the agent is instructed to never stop) and relaunches with a forward-looking resume prompt that injects only the best `val_bpb` as a target to beat.
+
+**Anxious polling.** Without periodic output, the agent may assume a long-running command has completed and start polling `run.log` for results. `run_experiment.sh` prints a heartbeat every 30 seconds showing training progress percentage, keeping the agent informed that training is still running.
+
+**Whitespace and formatting errors.** Local models occasionally introduce literal tabs, trailing whitespace, or other formatting issues when editing Python code. The syntax-check step in `run_experiment.sh` catches these immediately (exit code 2), and the CLAUDE.md instructions direct the agent to use `revert_train.sh` to recover.
+
+**Going in circles.** When an edit fails, smaller models sometimes retry the exact same approach repeatedly. The context compaction watchdog helps by restarting the agent with a clean context after a configurable number of experiments, breaking the cycle.
+
+**Recommended models for reliability:** Qwen3.6 27B and Gemma 4 26B are the most reliable for the experiment loop. Models under 14B parameters show noticeably more edit failures and premature exits. Code-specialized models (Qwen 2.5 Coder 14B) can be more precise with edits but may be weaker at experiment reasoning.
+
 ---
 
 ## Parameter Tuning
@@ -222,9 +240,12 @@ The agent follows `program.md`, which instructs it to:
 6. Keep or discard the change based on improvement (git reset for discards)
 7. Repeat indefinitely until manually stopped
 
-The agent logs results to `results.tsv` with columns: commit, val_bpb, memory_gb, status, and description. Two wrapper scripts handle sandbox restrictions:
-- `run_experiment.sh` — runs training and captures output to `run.log`
-- `log_result.sh` — appends results to `results.tsv`
+The agent logs results to `results.tsv` with columns: commit, val_bpb, memory_gb, status, description, and timestamp. Three wrapper scripts handle sandbox restrictions and provide safety nets:
+- `run_experiment.sh` — syntax-checks `train.py`, runs training with heartbeat progress output, cleans `run.log`, and backs up the last working version
+- `log_result.sh` — appends results to `results.tsv` with UTC timestamp
+- `revert_train.sh` — restores `train.py` from the last successful training run
+
+The agent auto-restarts on any exit (configurable with `--max-restarts N` or `--no-restart`). A context compaction watchdog restarts the agent every 30 experiments (configurable with `--experiments-per-session N`) for a fresh context window.
 
 Stop the agent with `Ctrl+C` or `docker stop autoresearch-dgx-local-agent`. All committed experiments are preserved in git history.
 
