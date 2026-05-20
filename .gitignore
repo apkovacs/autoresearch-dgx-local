@@ -17,6 +17,7 @@ CLAUDE.md
 AGENTS.md
 _round_prompt.md
 run_experiment.sh
+log_result.sh
 run.log
 
 # Experimental code/artifacts

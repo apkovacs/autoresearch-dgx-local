@@ -39,12 +39,21 @@ This starts Ollama with Qwen3.6 27B (default), installs Claude Code, and begins 
 ### Use a Different Model
 
 ```bash
-OLLAMA_MODEL=gemma4:27b bash run-dgx-agent.sh     # Gemma 4 27B
-OLLAMA_MODEL=gemma4:12b bash run-dgx-agent.sh     # Gemma 4 12B (more memory headroom)
+OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh     # Gemma 4 26B
+OLLAMA_MODEL=gemma4:e4b bash run-dgx-agent.sh     # Gemma 4 E4B (more memory headroom)
 OLLAMA_MODEL=qwen2.5-coder:14b bash run-dgx-agent.sh  # Code-specialized
 ```
 
 Run `bash run-dgx-agent.sh --help` to see all tested models.
+
+### Pre-built Docker Image (Faster Startup)
+
+Build once to skip dependency installation on every launch:
+
+```bash
+docker build -t autoresearch-dgx .
+DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
+```
 
 ## Multi-Branch Game Strategies
 
@@ -71,9 +80,25 @@ bash run-dgx.sh --test
 
 This checks Docker, GPU access, PyTorch, and the cache directory without running any training.
 
+## Monitoring
+
+```bash
+bash monitor-game.sh                    # live dashboard (leaderboard, recent events)
+bash monitor-game.sh --status           # one-shot snapshot (experiments, GPU, git)
+bash monitor-game.sh --transcript       # agent thinking + tool calls + training progress
+bash monitor-game.sh --events           # orchestrator event stream
+bash monitor-game.sh --transcript-raw   # raw stream-json
+```
+
+Stop a running container from another terminal:
+
+```bash
+docker stop autoresearch-dgx-agent      # or autoresearch-dgx-game
+```
+
 ## What to Expect
 
-- **Startup**: ~2 min for Docker pull + dependency install (first run), ~10 sec after
+- **Startup**: ~2 min for Docker pull + dependency install (first run), ~10 sec with pre-built image
 - **Shard download**: ~5 min for 10 shards (first run only — cached after)
 - **Compilation**: First ~10 training steps are `torch.compile` warmup (slow, expected)
 - **Steady state**: Training log shows step number, loss, tokens/sec, MFU%, and remaining time

@@ -22,14 +22,16 @@ while [[ $# -gt 0 ]]; do
         --events) MODE="events"; shift ;;
         --transcript) MODE="transcript"; shift ;;
         --transcript-raw) MODE="transcript-raw"; shift ;;
+        --status) MODE="status"; shift ;;
         -h|--help)
-            echo "Usage: bash monitor-game.sh [--events|--transcript|--transcript-raw] [-h]"
+            echo "Usage: bash monitor-game.sh [--events|--transcript|--transcript-raw|--status] [-h]"
             echo ""
             echo "Modes:"
             echo "  (default)         Live dashboard with leaderboard and recent events"
             echo "  --events          Tail the event log (formatted)"
             echo "  --transcript      Tail the latest agent transcript (formatted)"
             echo "  --transcript-raw  Tail the latest agent transcript (raw stream-json)"
+            echo "  --status          One-shot snapshot: experiments, GPU, agent activity"
             echo ""
             echo "The dashboard reads from logs/ inside the container."
             echo "Since the workspace is volume-mounted, you can also read"
@@ -115,6 +117,88 @@ wait_for_transcript() {
     done
 }
 
+# --- Mode: status snapshot ---
+if [ "$MODE" = "status" ]; then
+    echo "╔══════════════════════════════════════════════════════════════════════╗"
+    echo "║              autoresearch-dgx Status Snapshot                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Experiments
+    echo "  ── Experiments ──"
+    if run_cmd "test -f results.tsv" 2>/dev/null; then
+        TOTAL=$(run_cmd "wc -l < results.tsv" 2>/dev/null | tr -d ' ')
+        TOTAL=$((TOTAL - 1))  # subtract header
+        if [ "$TOTAL" -gt 0 ] 2>/dev/null; then
+            echo "  Completed: $TOTAL"
+            echo ""
+            run_cmd "cat results.tsv" 2>/dev/null | column -t -s$'\t' | while IFS= read -r line; do
+                echo "    $line"
+            done
+        else
+            echo "  No experiments completed yet."
+        fi
+    else
+        echo "  results.tsv not found."
+    fi
+    echo ""
+
+    # Latest result / active training
+    echo "  ── Training ──"
+    if run_cmd "pgrep -af 'python train.py'" 2>/dev/null | grep -q train; then
+        echo "  Status: RUNNING"
+        LAST_STEP=$(run_cmd "grep '^step ' run.log 2>/dev/null | tail -1" 2>/dev/null)
+        if [ -n "$LAST_STEP" ]; then
+            echo "  $LAST_STEP"
+        fi
+    else
+        LAST_BPB=$(run_cmd "grep '^val_bpb:' run.log 2>/dev/null | tail -1" 2>/dev/null)
+        if [ -n "$LAST_BPB" ]; then
+            echo "  Status: idle (last run finished)"
+            echo "  $LAST_BPB"
+        else
+            echo "  Status: idle"
+        fi
+    fi
+    echo ""
+
+    # GPU
+    echo "  ── GPU ──"
+    run_cmd "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits" 2>/dev/null | \
+        while IFS=', ' read -r idx util mem_used mem_total temp; do
+            pct=$((mem_used * 100 / mem_total))
+            echo "  GPU $idx: ${util}% util | ${mem_used}/${mem_total} MiB (${pct}%) | ${temp}°C"
+        done || echo "  (nvidia-smi not available)"
+    echo ""
+
+    # Git state
+    echo "  ── Git ──"
+    BRANCH=$(run_cmd "git -C /workspace rev-parse --abbrev-ref HEAD" 2>/dev/null)
+    [ -n "$BRANCH" ] && echo "  Branch: $BRANCH"
+    echo "  Recent commits:"
+    run_cmd "git -C /workspace log --oneline -5" 2>/dev/null | while IFS= read -r line; do
+        echo "    $line"
+    done
+    echo ""
+
+    # Agent process
+    echo "  ── Agent ──"
+    if run_cmd "pgrep -af claude" 2>/dev/null | grep -q claude; then
+        echo "  Claude Code: running"
+    else
+        echo "  Claude Code: not running"
+    fi
+
+    # Transcript info
+    LATEST_TRANSCRIPT=$(find_latest_transcript)
+    if [ -n "$LATEST_TRANSCRIPT" ]; then
+        LINES=$(run_cmd "wc -l < $LATEST_TRANSCRIPT" 2>/dev/null | tr -d ' ')
+        echo "  Transcript: $LATEST_TRANSCRIPT ($LINES events)"
+    fi
+
+    exit 0
+fi
+
 # --- Mode: raw event tail ---
 if [ "$MODE" = "events" ]; then
     echo "=== Tailing event log (Ctrl+C to stop) ==="
@@ -159,8 +243,52 @@ if [ "$MODE" = "transcript" ]; then
     LATEST=$(find_latest_transcript)
     [ -z "$LATEST" ] && LATEST=$(wait_for_transcript)
     echo "Following: $LATEST"
-    echo "  Showing: thinking | tool calls | agent responses"
+    echo "  Showing: thinking | tool calls | agent responses | training progress"
     echo "---"
+
+    # Also tail run.log for live training progress (runs in background)
+    # Shows compact progress: step count, loss, val_bpb, tokens/sec
+    TRAIN_LOG_PID=""
+    start_training_tail() {
+        local log_path="$1"
+        (run_cmd "tail -f $log_path 2>/dev/null" | \
+            grep --line-buffered -E "^step |^val_bpb:|^training_seconds:|compil" | \
+            while IFS= read -r line; do
+                # Compact: show step lines as progress, key metrics in full
+                case "$line" in
+                    step*)
+                        # Extract step number and show compact progress
+                        step_num=$(echo "$line" | grep -oP 'step \K\d+')
+                        loss=$(echo "$line" | grep -oP 'loss \K[0-9.]+')
+                        tps=$(echo "$line" | grep -oP '[0-9.]+ tokens/sec' | head -1)
+                        printf "\r\033[2m  [training] step %-5s loss %-8s %s\033[0m" \
+                            "$step_num" "$loss" "$tps"
+                        ;;
+                    val_bpb*)
+                        printf "\n\033[32;1m  [result] %s\033[0m\n" "$line"
+                        ;;
+                    training_seconds*)
+                        printf "  [result] %s\n" "$line"
+                        ;;
+                    *ompil*)
+                        printf "\r\033[2m  [training] compiling...\033[0m"
+                        ;;
+                esac
+            done) &
+        TRAIN_LOG_PID=$!
+    }
+
+    # Determine run.log path
+    if [ -z "$RUN_PREFIX" ]; then
+        RUN_LOG="run.log"
+    else
+        RUN_LOG="/workspace/run.log"
+    fi
+    start_training_tail "$RUN_LOG"
+
+    # Clean up background tail on exit
+    trap '[ -n "$TRAIN_LOG_PID" ] && kill $TRAIN_LOG_PID 2>/dev/null; exit' INT TERM EXIT
+
     if [ -n "$FORMATTER" ]; then
         run_cmd "tail -f $LATEST" | python3 "$FORMATTER"
     else
@@ -212,9 +340,10 @@ draw_dashboard() {
     echo "  Refreshing every 5s. Ctrl+C to exit."
     echo ""
     echo "  Other views:"
-    echo "    bash monitor-game.sh --events          orchestrator event stream"
-    echo "    bash monitor-game.sh --transcript       agent thinking + tool calls + responses"
-    echo "    bash monitor-game.sh --transcript-raw   raw stream-json from agent"
+    echo "    bash monitor-game.sh --status            one-shot snapshot (experiments, GPU, git)"
+    echo "    bash monitor-game.sh --events            orchestrator event stream"
+    echo "    bash monitor-game.sh --transcript         agent thinking + tool calls + training"
+    echo "    bash monitor-game.sh --transcript-raw     raw stream-json from agent"
 }
 
 while true; do

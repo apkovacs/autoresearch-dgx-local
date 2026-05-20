@@ -33,6 +33,8 @@ flash-attn3 has no ARM64 builds. We replace it with PyTorch's built-in `scaled_d
 - Docker containerization with unified-memory-safe flags (`--oom-score-adj`, `--shm-size 64gb`)
 - Persistent training shard storage via Docker volume mounts
 - Optional local LLM agent (Ollama + Claude Code) for autonomous experimentation
+- Pre-built Docker image (`Dockerfile`) for fast container launches
+- Observability stack: live dashboard, transcript viewer, status snapshots
 - OOM detection with clean exit (unified memory OOM can freeze the whole machine)
 
 ## Persistent Shard Storage
@@ -51,7 +53,21 @@ The autonomous experiment loop (defined in `program.md`) can run entirely on-dev
 
 ```bash
 bash run-dgx-agent.sh                           # default: Qwen3.6 27B
-OLLAMA_MODEL=gemma4:27b bash run-dgx-agent.sh   # alternative model
+OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh   # alternative model
+```
+
+For faster startup, build a pre-built image that bakes in all dependencies:
+
+```bash
+docker build -t autoresearch-dgx .
+DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
+```
+
+Monitor the agent from another terminal:
+
+```bash
+bash monitor-game.sh --status       # snapshot: experiments, GPU, git state
+bash monitor-game.sh --transcript   # live agent activity + training progress
 ```
 
 See [DGX_SETUP.md](DGX_SETUP.md) for the full model selection guide.

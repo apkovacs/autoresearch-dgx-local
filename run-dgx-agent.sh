@@ -187,6 +187,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
       "Write(run.log)",
       "Bash(ls /cache/*)",
       "Bash(bash run_experiment.sh*)",
+      "Bash(bash log_result.sh*)",
       "Bash(python train.py*)",
       "Bash(python prepare.py*)",
       "Bash(python3 train.py*)",
@@ -261,6 +262,21 @@ exit $exit_code
 RUNEXP
 chmod +x /workspace/run_experiment.sh
 
+# Create results logger script (>> redirect is blocked by Claude Code sandbox)
+cat > /workspace/log_result.sh << 'LOGEXP'
+#!/usr/bin/env bash
+# Wrapper: appends experiment result to results.tsv
+# Usage: bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION
+if [ $# -lt 5 ]; then
+    echo "Usage: bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION"
+    echo "Example: bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline"
+    exit 1
+fi
+printf "%s\t%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$4" "$5" >> results.tsv
+echo "Logged to results.tsv: $1  val_bpb=$2  mem=$3GB  status=$4  $5"
+LOGEXP
+chmod +x /workspace/log_result.sh
+
 # Write CLAUDE.md so the agent knows the environment is ready
 # This overrides the Setup section of program.md
 cat > /workspace/CLAUDE.md << CLAUDEMD
@@ -276,8 +292,8 @@ Do NOT run the Setup section of program.md. Go directly to the Experimentation l
 
 ## IMPORTANT: Command differences from program.md
 - Use \`bash run_experiment.sh\` to run experiments (NOT \`python train.py > run.log 2>&1\`)
-  This wrapper captures output to run.log and prints key metrics when done.
-- Do NOT use output redirection (\`>\`) in bash commands — it is blocked by the sandbox.
+- Use \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` to log results
+- Do NOT use output redirection (\`>\` or \`>>\`) in bash commands — it is blocked by the sandbox.
 - Use \`python train.py\` instead of \`uv run train.py\` (there is no uv in this environment)
 - Data is already prepared — do NOT run prepare.py
 
@@ -295,13 +311,12 @@ For EVERY experiment (including the baseline), do ALL of these steps:
 4. \`grep "^val_bpb:\|^peak_vram_mb:" run.log\`
 5. Get the commit hash: \`git rev-parse --short HEAD\`
 6. **Log the result to results.tsv NOW** — run this command:
-   \`printf "%s\t%s\t%s\t%s\t%s\n" "COMMIT" "VAL_BPB" "MEM_GB" "STATUS" "DESCRIPTION" >> results.tsv\`
-   (replace the placeholder values with actuals, e.g.:)
-   \`printf "%s\t%s\t%s\t%s\t%s\n" "a1b2c3d" "1.879972" "7.6" "keep" "baseline" >> results.tsv\`
+   \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\`
+   Example: \`bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline\`
 7. If val_bpb IMPROVED (lower): keep the commit, move on
 8. If val_bpb did NOT improve: \`git reset --hard HEAD~1\` to revert
 
-**AFTER EVERY EXPERIMENT you MUST run the printf command in step 6 to log to results.tsv.**
+**AFTER EVERY EXPERIMENT you MUST run \`bash log_result.sh\` (step 6) to log to results.tsv.**
 **To revert failed experiments, MUST use \`git reset --hard HEAD~1\`.**
 Do not manually undo code changes. Do not use python3 -c to edit files.
 

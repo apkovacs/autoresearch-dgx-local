@@ -9,7 +9,7 @@
 **Fix**:
 - Hard reboot the machine (hold power button)
 - After restart, reduce `DEVICE_BATCH_SIZE` in `train.py` (try halving it)
-- If running the agent, switch to a smaller LLM: `OLLAMA_MODEL=gemma4:12b bash run-dgx-agent.sh`
+- If running the agent, switch to a smaller LLM: `OLLAMA_MODEL=gemma4:e4b bash run-dgx-agent.sh`
 - The `--oom-score-adj 1000` Docker flag helps the kernel kill the container before the system freezes, but it's not guaranteed
 
 **Prevention**: The training loop includes OOM detection that exits cleanly with a helpful message. If you see this message, reduce batch size before restarting.
@@ -165,4 +165,44 @@ docker rm autoresearch-dgx-agent    # for run-dgx-agent.sh
 
 # Or force-remove if still running
 docker rm -f autoresearch-dgx
+```
+
+---
+
+## Git Permission Error After Container Run
+
+**Symptom**: `error: insufficient permission for adding an object to repository database .git/objects` when pulling or committing on the host.
+
+**Cause**: The Docker container runs as root and creates `.git/objects` files owned by root. The host user can't write to them.
+
+**Fix**:
+
+```bash
+sudo chown -R $(whoami) .git
+```
+
+The launcher scripts include an EXIT trap that restores `.git` ownership automatically on clean shutdown. This issue only occurs if the container is hard-killed (`docker kill`) before the trap fires.
+
+---
+
+## Agent Stops After Permission Denial
+
+**Symptom**: The agent runs one experiment and then the session ends. Transcript shows `"permission_denials"` and `"stop_reason":"end_turn"`.
+
+**Cause**: The Claude Code sandbox blocks bash output redirection (`>` and `>>`). If the agent tries `printf ... >> results.tsv`, the sandbox blocks it and smaller models treat this as a fatal error.
+
+**Fix**: The launcher scripts generate wrapper scripts (`run_experiment.sh`, `log_result.sh`) that handle redirects internally. Make sure you're running the latest version of the launcher scripts. The `CLAUDE.md` instructions tell the agent to use these wrappers instead of direct redirection.
+
+---
+
+## Ollama Model Pull Fails
+
+**Symptom**: `Error: pull model manifest: file does not exist` when pulling a model.
+
+**Cause**: The model tag may have been renamed or removed from the Ollama registry.
+
+**Fix**: Check available tags at [ollama.com/library](https://ollama.com/library) and use an updated tag. For example, `gemma4:12b` was replaced by `gemma4:e4b`.
+
+```bash
+OLLAMA_MODEL=gemma4:e4b bash run-dgx-agent.sh
 ```
