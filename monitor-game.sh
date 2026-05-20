@@ -13,7 +13,7 @@
 set -euo pipefail
 
 MODE="dashboard"
-CONTAINER_NAME="autoresearch-dgx-game"
+CONTAINER_NAME="autoresearch-dgx-local-game"
 EVENT_LOG="logs/events.jsonl"
 TRANSCRIPT_DIR="logs/transcripts"
 
@@ -50,12 +50,12 @@ if [ -f "$EVENT_LOG" ]; then
 elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
     RUN_PREFIX="docker exec $CONTAINER_NAME"
     DETECTED_CONTAINER="$CONTAINER_NAME"
-elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx-agent$"; then
-    RUN_PREFIX="docker exec autoresearch-dgx-agent"
-    DETECTED_CONTAINER="autoresearch-dgx-agent"
-elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx$"; then
-    RUN_PREFIX="docker exec autoresearch-dgx"
-    DETECTED_CONTAINER="autoresearch-dgx"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx-local-agent$"; then
+    RUN_PREFIX="docker exec autoresearch-dgx-local-agent"
+    DETECTED_CONTAINER="autoresearch-dgx-local-agent"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^autoresearch-dgx-local$"; then
+    RUN_PREFIX="docker exec autoresearch-dgx-local"
+    DETECTED_CONTAINER="autoresearch-dgx-local"
 else
     echo "ERROR: No event log found and no autoresearch container is running."
     echo ""
@@ -64,7 +64,7 @@ else
     echo "  bash run-dgx-agent.sh                (single-branch agent)"
     echo ""
     echo "Note: The single-branch agent (run-dgx-agent.sh) does not produce"
-    echo "an event log. Use 'docker logs -f autoresearch-dgx-agent' to monitor it,"
+    echo "an event log. Use 'docker logs -f autoresearch-dgx-local-agent' to monitor it,"
     echo "or switch to run-dgx-game.sh --mode base for full observability."
     exit 1
 fi
@@ -120,7 +120,7 @@ wait_for_transcript() {
 # --- Mode: status snapshot ---
 if [ "$MODE" = "status" ]; then
     echo "╔══════════════════════════════════════════════════════════════════════╗"
-    echo "║              autoresearch-dgx Status Snapshot                      ║"
+    echo "║              autoresearch-dgx-local Status Snapshot                      ║"
     echo "╚══════════════════════════════════════════════════════════════════════╝"
     echo ""
 
@@ -314,7 +314,7 @@ draw_dashboard() {
     clear
 
     echo "╔══════════════════════════════════════════════════════════════════════╗"
-    echo "║              autoresearch-dgx Game Monitor                         ║"
+    echo "║              autoresearch-dgx-local Game Monitor                         ║"
     echo "╚══════════════════════════════════════════════════════════════════════╝"
     echo ""
 

@@ -201,9 +201,9 @@ Monitor memory usage with `bash monitor-dgx.sh`. If you see memory pressure, red
 Building a custom image bakes in all dependencies (Python packages, Ollama, Claude Code, Node.js) so container launches take seconds instead of minutes:
 
 ```bash
-docker build -t autoresearch-dgx .
-DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
-DOCKER_IMAGE=autoresearch-dgx bash run-dgx-game.sh --mode island
+docker build -t autoresearch-dgx-local .
+DOCKER_IMAGE=autoresearch-dgx-local bash run-dgx-agent.sh
+DOCKER_IMAGE=autoresearch-dgx-local bash run-dgx-game.sh --mode island
 ```
 
 The launcher scripts automatically detect the pre-built image and skip installation steps.
@@ -226,7 +226,7 @@ The agent logs results to `results.tsv` with columns: commit, val_bpb, memory_gb
 - `run_experiment.sh` — runs training and captures output to `run.log`
 - `log_result.sh` — appends results to `results.tsv`
 
-Stop the agent with `Ctrl+C` or `docker stop autoresearch-dgx-agent`. All committed experiments are preserved in git history.
+Stop the agent with `Ctrl+C` or `docker stop autoresearch-dgx-local-agent`. All committed experiments are preserved in git history.
 
 ---
 

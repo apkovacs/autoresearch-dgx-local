@@ -20,7 +20,7 @@ set -euo pipefail
 SHARD_CACHE_DIR="${SHARD_CACHE_DIR:-$HOME/.cache/autoresearch}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
-CONTAINER_NAME="autoresearch-dgx"
+CONTAINER_NAME="autoresearch-dgx-local"
 MODE="interactive"
 
 # --- Parse arguments ---

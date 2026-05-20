@@ -28,7 +28,7 @@ SHARD_CACHE_DIR="${SHARD_CACHE_DIR:-$HOME/.cache/autoresearch}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
-CONTAINER_NAME="autoresearch-dgx-game"
+CONTAINER_NAME="autoresearch-dgx-local-game"
 GAME_MODE=""
 GAME_CONFIG="game_config.yaml"
 
@@ -62,7 +62,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Pre-flight checks ---
-echo "=== autoresearch-dgx Game Orchestrator ==="
+echo "=== autoresearch-dgx-local Game Orchestrator ==="
 echo ""
 
 if ! command -v docker &>/dev/null; then

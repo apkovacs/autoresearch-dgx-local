@@ -14,10 +14,10 @@ CONTAINER="${1:-}"
 
 # Auto-detect container if not specified
 if [ -z "$CONTAINER" ]; then
-    if docker ps --format '{{.Names}}' | grep -q "autoresearch-dgx-agent"; then
-        CONTAINER="autoresearch-dgx-agent"
-    elif docker ps --format '{{.Names}}' | grep -q "autoresearch-dgx"; then
-        CONTAINER="autoresearch-dgx"
+    if docker ps --format '{{.Names}}' | grep -q "autoresearch-dgx-local-agent"; then
+        CONTAINER="autoresearch-dgx-local-agent"
+    elif docker ps --format '{{.Names}}' | grep -q "autoresearch-dgx-local"; then
+        CONTAINER="autoresearch-dgx-local"
     else
         echo "No autoresearch container found running."
         echo "Start one with: bash run-dgx.sh  or  bash run-dgx-agent.sh"

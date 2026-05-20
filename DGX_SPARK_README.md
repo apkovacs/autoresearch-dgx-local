@@ -59,8 +59,8 @@ OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh   # alternative model
 For faster startup, build a pre-built image that bakes in all dependencies:
 
 ```bash
-docker build -t autoresearch-dgx .
-DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
+docker build -t autoresearch-dgx-local .
+DOCKER_IMAGE=autoresearch-dgx-local bash run-dgx-agent.sh
 ```
 
 Monitor the agent from another terminal:

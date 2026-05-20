@@ -1,5 +1,5 @@
 """
-Meta-research orchestrator for autoresearch-dgx.
+Meta-research orchestrator for autoresearch-dgx-local.
 
 Manages multiple research branches using game-theory-inspired strategies.
 Supports four modes: base, island, bandit, coopetition.
@@ -546,7 +546,7 @@ def main():
         save_config(config, args.config)
 
     mode = config["mode"]
-    print(f"=== autoresearch-dgx Orchestrator ===")
+    print(f"=== autoresearch-dgx-local Orchestrator ===")
     print(f"  Mode: {mode}")
     print(f"  Tag: {config['tag']}")
     print(f"  Config: {args.config}")

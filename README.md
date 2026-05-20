@@ -1,4 +1,4 @@
-# autoresearch-dgx
+# autoresearch-dgx-local
 
 A fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) adapted for the NVIDIA DGX Spark, with persistent storage, local LLM agent support, and a game-theory-inspired meta-research orchestration framework.
 
@@ -32,8 +32,8 @@ Each layer is independently useful. You can run just the training loop, add the 
 ### Training only
 
 ```bash
-git clone https://github.com/apkovacs/autoresearch-dgx.git
-cd autoresearch-dgx
+git clone https://github.com/apkovacs/autoresearch-dgx-local.git
+cd autoresearch-dgx-local
 git checkout dgx-spark
 bash run-dgx.sh
 ```

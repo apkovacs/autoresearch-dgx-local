@@ -113,7 +113,7 @@ docker ps
 **Fix**:
 - Check if port 11434 is already in use on the host: `lsof -i :11434`
 - If Ollama is running on the host, stop it first: `systemctl stop ollama` or `killall ollama`
-- Check container logs: `docker logs autoresearch-dgx-agent`
+- Check container logs: `docker logs autoresearch-dgx-local-agent`
 
 ---
 
@@ -160,11 +160,11 @@ curl http://localhost:11434/api/tags
 
 ```bash
 # Remove the old container
-docker rm autoresearch-dgx          # for run-dgx.sh
-docker rm autoresearch-dgx-agent    # for run-dgx-agent.sh
+docker rm autoresearch-dgx-local          # for run-dgx.sh
+docker rm autoresearch-dgx-local-agent    # for run-dgx-agent.sh
 
 # Or force-remove if still running
-docker rm -f autoresearch-dgx
+docker rm -f autoresearch-dgx-local
 ```
 
 ---

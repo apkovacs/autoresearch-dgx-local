@@ -11,7 +11,7 @@
 Run a single training experiment:
 
 ```bash
-git clone https://github.com/apkovacs/autoresearch-dgx.git
+git clone https://github.com/apkovacs/autoresearch-dgx-local.git
 cd autoresearch
 git checkout dgx-spark
 bash run-dgx.sh
@@ -30,7 +30,7 @@ bash monitor-dgx.sh
 Run the autonomous experiment loop with a local LLM (no external APIs):
 
 ```bash
-git clone https://github.com/apkovacs/autoresearch-dgx.git
+git clone https://github.com/apkovacs/autoresearch-dgx-local.git
 cd autoresearch
 git checkout dgx-spark
 bash run-dgx-agent.sh
@@ -53,8 +53,8 @@ Run `bash run-dgx-agent.sh --help` to see all tested models.
 Build once to skip dependency installation on every launch:
 
 ```bash
-docker build -t autoresearch-dgx .
-DOCKER_IMAGE=autoresearch-dgx bash run-dgx-agent.sh
+docker build -t autoresearch-dgx-local .
+DOCKER_IMAGE=autoresearch-dgx-local bash run-dgx-agent.sh
 ```
 
 ## Multi-Branch Game Strategies
@@ -95,7 +95,7 @@ bash monitor-game.sh --transcript-raw   # raw stream-json
 Stop a running container from another terminal:
 
 ```bash
-docker stop autoresearch-dgx-agent      # or autoresearch-dgx-game
+docker stop autoresearch-dgx-local-agent      # or autoresearch-dgx-local-game
 ```
 
 ## What to Expect
