@@ -50,9 +50,14 @@ Set `SHARD_CACHE_DIR` to change the host path. See [DGX_SETUP.md](DGX_SETUP.md) 
 
 ## Local LLM Agent
 
-The autonomous experiment loop (defined in `program.md`) can run entirely on-device using Ollama for local LLM inference and Claude Code as the agent framework:
+Two modes are available for running the experiment loop with local models:
 
 ```bash
+# Hypothesis generator (recommended) — LLM proposes edits, script handles everything else
+bash run-dgx-local.sh                           # default: Qwen3.6 27B
+bash run-dgx-local.sh --max-experiments 100     # set experiment budget
+
+# Full agent — LLM drives the entire loop via Claude Code tool use
 bash run-dgx-agent.sh                           # default: Qwen3.6 27B
 OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh   # alternative model
 ```
