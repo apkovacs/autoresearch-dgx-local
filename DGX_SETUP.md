@@ -194,6 +194,8 @@ Running the experiment loop with locally-hosted models (rather than frontier API
 
 **Whitespace and formatting errors.** Local models occasionally introduce literal tabs, trailing whitespace, or other formatting issues when editing Python code. The syntax-check step in `run_experiment.sh` catches these immediately (exit code 2), and the CLAUDE.md instructions direct the agent to use `revert_train.sh` to recover.
 
+**Repetitive thinking loops.** Some models (especially Gemma 4 26B) can enter a degenerate loop where the model's internal reasoning repeats the same sentence thousands of times, consuming the entire output budget without emitting a tool call. The launcher creates a capped model alias with `num_predict 16384` to break these loops. If a model consistently produces zero experiments across multiple restarts, the zero-progress detector warns and suggests switching models.
+
 **Going in circles.** When an edit fails, smaller models sometimes retry the exact same approach repeatedly. The context compaction watchdog helps by restarting the agent with a clean context after a configurable number of experiments, breaking the cycle.
 
 **Recommended models for reliability:** Qwen3.6 27B and Gemma 4 26B are the most reliable for the experiment loop. Models under 14B parameters show noticeably more edit failures and premature exits. Code-specialized models (Qwen 2.5 Coder 14B) can be more precise with edits but may be weaker at experiment reasoning.
