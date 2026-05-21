@@ -260,6 +260,25 @@ CLI flags: `--max-restarts N` (default 3), `--no-restart` to disable, `--experim
 
 ---
 
+## Agent Enters Repetitive Thinking Loop (Zero Experiments)
+
+**Symptom**: The agent restarts repeatedly but completes zero experiments. Transcripts show the model producing thousands of tokens of "thinking" that repeat the same sentence (e.g., "I'll also check if results.tsv exists" repeated hundreds of times).
+
+**Cause**: Some models (especially Gemma 4 26B) can enter a degenerate sampling loop in their reasoning/thinking phase. The model gets stuck in a self-referential cycle and never breaks out to emit a tool call. The entire output token budget is consumed by repetitive thinking text.
+
+**Fix**:
+- The launcher scripts now create a capped model alias (`--capped`) with `num_predict 16384`, which limits each completion to ~16K tokens and breaks the loop
+- If it persists, try a different model: `OLLAMA_MODEL=qwen3.6:27b bash run-dgx-agent.sh`
+- The zero-progress detector warns after 2 restarts with no experiments and suggests switching models
+- Models under 14B are less prone to this specific failure but have other reliability issues
+
+**Signs in the transcript**:
+- Output token count (33K+) far exceeds tool call content
+- `"stop_reason":"end_turn"` with no tool calls in the turn
+- Agent says "I cannot use bash" or "I cannot use ls" (overgeneralizing from a permission denial)
+
+---
+
 ## Ollama Model Pull Fails
 
 **Symptom**: `Error: pull model manifest: file does not exist` when pulling a model.

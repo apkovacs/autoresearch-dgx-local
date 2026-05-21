@@ -171,6 +171,15 @@ done
 echo "[start] Pulling model: $OLLAMA_MODEL ..."
 ollama pull "$OLLAMA_MODEL"
 
+# Cap output tokens to prevent degenerate repetitive thinking loops
+echo "[start] Creating output-capped model alias..."
+ollama create "${OLLAMA_MODEL}-capped" -f /dev/stdin <<MODELFILE
+FROM $OLLAMA_MODEL
+PARAMETER num_predict 16384
+MODELFILE
+OLLAMA_MODEL="${OLLAMA_MODEL}-capped"
+echo "  Using capped model: $OLLAMA_MODEL (num_predict=16384)"
+
 export ANTHROPIC_BASE_URL="http://localhost:11434"
 export ANTHROPIC_AUTH_TOKEN="ollama"
 export ANTHROPIC_API_KEY="ollama"
@@ -359,47 +368,54 @@ chmod +x /workspace/log_result.sh
 
 # Write CLAUDE.md so the agent knows the environment is ready
 cat > /workspace/CLAUDE.md << 'CLAUDEMD'
-# Environment Notes — READ THIS FIRST
+# START HERE — Setup is done, begin experimenting immediately
 
-## IMPORTANT: Rules
-- Only use these tools: **Bash**, **Edit**, **Read**. Do NOT use Task, Monitor, TaskCreate, Agent, or any other tools.
-- Use `bash run_experiment.sh` to run experiments (NOT `python train.py > run.log 2>&1`)
-- **`bash run_experiment.sh` takes ~5 minutes** — it prints heartbeat progress every 30s. Just wait for it to finish. Do NOT check run.log while it is running.
-- Use `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION` to log results (timestamp added automatically)
-- Do NOT use output redirection (`>` or `>>`) in bash commands — it is blocked by the sandbox.
-- Do NOT run experiments in the background. Run them directly with Bash and wait for completion.
-- Data is already prepared — do NOT run prepare.py
-- The cache is at /cache/autoresearch (also symlinked to ~/.cache/autoresearch)
+## Step 1: Run the baseline NOW
 
-## What you can modify
-Only train.py — this is the single file you should edit.
-Use the Edit tool to modify train.py. Do NOT use python3 -c to rewrite files.
+Use the Read tool to read train.py. Then run:
 
-## Safety nets
-- `bash run_experiment.sh` **automatically syntax-checks** train.py before running. If there is a syntax error, it will tell you immediately (exit code 2) without wasting training time.
-- If you break train.py, run `bash revert_train.sh` to restore the last working version.
-- After each successful training run, train.py is backed up automatically.
+```
+bash run_experiment.sh
+```
 
-## Experiment loop — follow this EXACTLY
+This takes ~5 minutes and prints heartbeat progress. Wait for it to finish.
 
-For EVERY experiment (including the baseline), do ALL of these steps:
+## Step 2: Log the baseline result
 
-1. Edit train.py with your experimental idea (skip for baseline)
-2. `git add train.py && git commit -m "description of change"` (skip for baseline)
-3. `bash run_experiment.sh`
-4. If exit code is 2 (syntax error): run `bash revert_train.sh`, then fix your edit and retry
+After it finishes, extract results and log them:
+```
+grep "^val_bpb:\|^peak_vram_mb:" run.log
+git rev-parse --short HEAD
+bash log_result.sh COMMIT VAL_BPB MEM_GB keep baseline
+```
+
+## Step 3: Begin experiment loop
+
+Repeat this cycle to beat the baseline val_bpb:
+
+1. Use the **Edit** tool to modify train.py (the only file you edit)
+2. `git add train.py` then `git commit -m "description"`
+3. `bash run_experiment.sh` — wait for it (~5 min)
+4. If exit code 2 (syntax error): `bash revert_train.sh`, fix edit, retry
 5. `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. Get the commit hash: `git rev-parse --short HEAD`
-7. **Log the result to results.tsv NOW** — run this command:
-   `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION`
-   Example: `bash log_result.sh a1b2c3d 1.879972 7.6 keep baseline`
-8. If val_bpb IMPROVED (lower): keep the commit, move on
-9. If val_bpb did NOT improve: `git reset --hard HEAD~1` to revert
+6. `git rev-parse --short HEAD`
+7. `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION`
+8. If val_bpb improved: keep. If not: `git reset --hard HEAD~1`
 
-**AFTER EVERY EXPERIMENT you MUST run `bash log_result.sh` (step 7) to log to results.tsv.**
-**To revert failed experiments, MUST use `git reset --hard HEAD~1`.**
-**If train.py is broken, run `bash revert_train.sh` to restore the last working version.**
-Do not manually undo code changes. Do not use python3 -c to edit files.
+## Rules
+
+- Tools you can use: **Bash**, **Edit**, **Read** — nothing else
+- Do NOT use `>` or `>>` redirection — blocked by sandbox
+- Do NOT use `python train.py` directly — always use `bash run_experiment.sh`
+- Do NOT run prepare.py — data is already prepared
+- Do NOT run commands in background — run directly and wait
+- Do NOT use `python3 -c` to edit files — use the Edit tool
+- Run git commands one at a time (e.g. `git add train.py` then `git commit -m "msg"`), not chained with `&&`
+
+## Recovery
+
+- `bash revert_train.sh` — restore last working train.py
+- `bash run_experiment.sh` auto-checks syntax before training
 CLAUDEMD
 
 echo ""
