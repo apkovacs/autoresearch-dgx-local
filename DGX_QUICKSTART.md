@@ -24,14 +24,26 @@ Monitor in another terminal:
 bash monitor-dgx.sh
 ```
 
-## Full Autonomous Agent
+## Hypothesis Generator (Recommended for Local Models)
 
-Run the autonomous experiment loop with a local LLM (no external APIs):
+Deterministic experiment loop — the LLM only proposes edits, everything else is automated:
 
 ```bash
 git clone https://github.com/apkovacs/autoresearch-dgx-local.git
 cd autoresearch-dgx-local
 git checkout dgx-spark
+bash run-dgx-local.sh                              # default: Qwen3.6 27B
+OLLAMA_MODEL=gemma4:26b bash run-dgx-local.sh      # alternative model
+bash run-dgx-local.sh --max-experiments 100         # set experiment budget
+```
+
+No Claude Code or Node.js needed — just Ollama and Python. Higher reliability than the full agent mode: no permission denials, no tool confusion, no repetitive thinking loops.
+
+## Full Autonomous Agent
+
+Run the full agent loop with Claude Code (best for frontier API models or highly capable local models):
+
+```bash
 bash run-dgx-agent.sh
 ```
 

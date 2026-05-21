@@ -1,0 +1,6 @@
+commit	val_bpb	memory_gb	status	description	timestamp
+a1b2c3d	1.879972	7.6	keep	baseline	2026-05-20T08:15:30Z
+b2c3d4e	1.865100	7.8	keep	increase DEPTH from 4 to 6	2026-05-20T08:21:02Z
+c3d4e5f	1.870200	7.8	discard	double MATRIX_LR to 0.08	2026-05-20T08:26:45Z
+d4e5f6g	0.000000	0.0	crash	increase DEVICE_BATCH_SIZE to 32 (OOM)	2026-05-20T08:32:10Z
+e5f6g7h	1.858900	8.1	keep	increase ASPECT_RATIO from 64 to 80	2026-05-20T08:37:55Z

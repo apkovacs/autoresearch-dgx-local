@@ -129,6 +129,30 @@ This approach is based on [this guide](https://medium.com/@luongnv89/run-claude-
 
 Any Ollama-compatible model works — just set `OLLAMA_MODEL` to its tag.
 
+### Choosing Your Agent Mode
+
+Two modes are available, depending on your model's capabilities:
+
+| Scenario | Recommended mode | Script | Dependencies |
+|---|---|---|---|
+| Frontier API (Claude, GPT-4) | Full agent | `run-dgx-agent.sh` | Claude Code + Ollama |
+| Large local (27B+, reliable tool use) | Full agent | `run-dgx-agent.sh` | Claude Code + Ollama |
+| Local models (any size) | Hypothesis generator | `run-dgx-local.sh` | Ollama only |
+| Local models with reliability issues | Hypothesis generator | `run-dgx-local.sh` | Ollama only |
+
+**Full agent mode** (`run-dgx-agent.sh`): The LLM drives the entire experiment loop using Claude Code's tool-use framework (Edit, Bash, Read). More flexible — the agent can inspect logs, try multi-step reasoning, and make creative decisions about what to investigate. Requires models that can reliably follow multi-step instructions and use tools correctly.
+
+**Hypothesis generator mode** (`run-dgx-local.sh`): The LLM only proposes edits as structured JSON. Everything else (git, training, logging, keep/revert) is handled deterministically by the script. No Claude Code or Node.js needed. Higher reliability — no permission denials, no tool confusion, no repetitive thinking loops. Lower flexibility — the agent can't inspect training logs or do multi-step reasoning.
+
+```bash
+# Full agent mode (for frontier or highly capable local models)
+bash run-dgx-agent.sh
+
+# Hypothesis generator mode (recommended for local models)
+bash run-dgx-local.sh
+bash run-dgx-local.sh --max-experiments 100
+```
+
 ### Memory Budget
 
 With 128 GB unified memory:
