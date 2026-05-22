@@ -1,32 +1,37 @@
 #!/usr/bin/env bash
 # run-bench.sh — Run benchmarks inside the containerized benchmark suite
 #
-# Builds the benchmark Docker image (if needed) and runs the specified
-# benchmark level with all adapter dependencies pre-installed.
+# Builds the benchmark Docker image (if needed), starts Ollama inside the
+# container, pulls the requested model(s), and runs the benchmark.
 #
 # Usage:
 #   bash benchmark/run-bench.sh edit-quality --models qwen3.6:27b gemma4:26b --trials 10
 #   bash benchmark/run-bench.sh harness --adapters ollama_raw aider --model qwen3.6:27b
 #   bash benchmark/run-bench.sh e2e --harness hyp --model qwen3.6:27b --budget 10
-#   bash benchmark/run-bench.sh shell    # drop into a shell inside the container
+#   bash benchmark/run-bench.sh dashboard    # generate results dashboard
+#   bash benchmark/run-bench.sh shell        # interactive shell inside the container
 #
 # Prerequisites:
 #   - Docker installed
-#   - Ollama running on the host (localhost:11434)
-#   - Models pulled: ollama pull qwen3.6:27b
+#   - Model weights are cached on the host (~/.ollama/models) and mounted in
 #
 # Environment variables:
-#   BENCH_IMAGE    Docker image name (default: autoresearch-bench)
-#   OLLAMA_URL     Ollama API URL (default: http://localhost:11434)
-#   BENCH_GPU      Set to "1" to pass --gpus all (needed for Level 3)
+#   BENCH_IMAGE     Docker image name (default: autoresearch-bench)
+#   OLLAMA_MODELS   Host path for Ollama model cache (default: ~/.ollama/models)
+#   OLLAMA_MODEL    Default model for benchmarks (default: qwen3.6:27b)
+#   BENCH_GPU       Set to "1" to pass --gpus all (needed for Level 3)
 
 set -euo pipefail
 
 BENCH_IMAGE="${BENCH_IMAGE:-autoresearch-bench}"
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.6:27b}"
 BENCH_GPU="${BENCH_GPU:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- Create persistent directories ---
+mkdir -p "$OLLAMA_MODELS"
 
 # --- Build image if needed ---
 if ! docker image inspect "$BENCH_IMAGE" &>/dev/null; then
@@ -43,12 +48,19 @@ if [ $# -lt 1 ]; then
     echo "  edit-quality   Level 1: Edit quality (no GPU)"
     echo "  harness        Level 2: Harness comparison (mostly no GPU)"
     echo "  e2e            Level 3: End-to-end (requires GPU)"
+    echo "  dashboard      Generate HTML dashboard from results"
     echo "  shell          Interactive shell inside the benchmark container"
     echo ""
     echo "Examples:"
     echo "  bash benchmark/run-bench.sh edit-quality --models qwen3.6:27b --trials 5"
     echo "  bash benchmark/run-bench.sh harness --adapters ollama_raw aider --trials 10"
     echo "  BENCH_GPU=1 bash benchmark/run-bench.sh e2e --budget 10"
+    echo "  bash benchmark/run-bench.sh dashboard"
+    echo ""
+    echo "Environment variables:"
+    echo "  OLLAMA_MODELS   Host Ollama model cache (default: ~/.ollama/models)"
+    echo "  OLLAMA_MODEL    Default model (default: qwen3.6:27b)"
+    echo "  BENCH_GPU       Enable GPU (default: 0)"
     exit 0
 fi
 
@@ -57,21 +69,24 @@ shift
 
 case "$LEVEL" in
     edit-quality|edit_quality|l1)
-        CMD="python benchmark/bench_edit_quality.py $*"
+        CMD=(python benchmark/bench_edit_quality.py "$@")
         ;;
     harness|l2)
-        CMD="python benchmark/bench_harness.py $*"
+        CMD=(python benchmark/bench_harness.py "$@")
         ;;
     e2e|l3)
         BENCH_GPU=1
-        CMD="python benchmark/bench_e2e.py $*"
+        CMD=(python benchmark/bench_e2e.py "$@")
+        ;;
+    dashboard)
+        CMD=(python benchmark/bench_dashboard.py "$@")
         ;;
     shell)
-        CMD="bash"
+        CMD=(bash)
         ;;
     *)
         echo "Unknown level: $LEVEL"
-        echo "Use: edit-quality, harness, e2e, or shell"
+        echo "Use: edit-quality, harness, e2e, dashboard, or shell"
         exit 1
         ;;
 esac
@@ -79,10 +94,11 @@ esac
 # --- Build docker run command ---
 DOCKER_ARGS=(
     docker run --rm -it
-    --network host
     -v "$REPO_ROOT":/workspace
+    -v "$OLLAMA_MODELS":/root/.ollama/models
     -v /var/run/docker.sock:/var/run/docker.sock
-    -e "OLLAMA_URL=$OLLAMA_URL"
+    -e "OLLAMA_MODEL=$OLLAMA_MODEL"
+    -e "OLLAMA_KEEP_ALIVE=0"
 )
 
 if [ "$BENCH_GPU" = "1" ]; then
@@ -90,11 +106,12 @@ if [ "$BENCH_GPU" = "1" ]; then
 fi
 
 echo "=== Autoresearch Benchmark ==="
-echo "  Level:   $LEVEL"
-echo "  Image:   $BENCH_IMAGE"
-echo "  Ollama:  $OLLAMA_URL"
-echo "  GPU:     $([ "$BENCH_GPU" = "1" ] && echo "enabled" || echo "disabled")"
-echo "  Command: $CMD"
+echo "  Level:        $LEVEL"
+echo "  Image:        $BENCH_IMAGE"
+echo "  Ollama model: $OLLAMA_MODEL"
+echo "  Model cache:  $OLLAMA_MODELS"
+echo "  GPU:          $([ "$BENCH_GPU" = "1" ] && echo "enabled" || echo "disabled")"
+echo "  Command:      ${CMD[*]}"
 echo ""
 
-"${DOCKER_ARGS[@]}" "$BENCH_IMAGE" $CMD
+"${DOCKER_ARGS[@]}" "$BENCH_IMAGE" "${CMD[@]}"

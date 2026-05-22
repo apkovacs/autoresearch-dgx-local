@@ -24,9 +24,8 @@ bash benchmark/run-bench.sh shell
 ## Prerequisites
 
 - Docker installed
-- Ollama running on the host (`ollama serve`)
-- Models pulled (`ollama pull qwen3.6:27b`)
 - For Level 3: GPU with Docker GPU support
+- Model weights cached on the host (`~/.ollama/models`) for fast startup (optional — models are pulled automatically if missing)
 
 ## Levels
 
@@ -77,23 +76,42 @@ BENCH_GPU=1 bash benchmark/run-bench.sh e2e \
 
 **Harnesses:** `hyp` (run-dgx-local.sh) or `agent` (run-dgx-agent.sh).
 
+## Dashboard
+
+Generate an HTML dashboard from benchmark results:
+
+```bash
+bash benchmark/run-bench.sh dashboard
+```
+
+Opens `benchmark/results/dashboard.html` — a self-contained page with Chart.js visualizations:
+- **Level 1:** Grouped bar chart of success rates by model (JSON, schema, apply, syntax)
+- **Level 2:** Dual-axis chart comparing harness success rate and latency
+- **Level 3:** Table with baseline/best BPB, improvement percentage, wall time
+
+Use `--no-open` to generate without opening in a browser.
+
 ## Docker Details
 
 The benchmark Dockerfile (`benchmark/Dockerfile`) bundles:
 - Python 3.12
+- Ollama (runs inside the container — no host installation needed)
 - Aider (`pip install aider-chat`)
 - Claude Code (`npm install -g @anthropic-ai/claude-code`)
 - OpenHands CLI
 - Docker client (for OpenHands adapter, via socket mount)
 
-The container uses `--network host` to reach Ollama on the host machine and mounts the Docker socket for the OpenHands adapter.
+The entrypoint automatically starts Ollama, waits for readiness, and pulls any models specified via `OLLAMA_MODEL`, `--model`, or `--models` flags before running the benchmark command.
+
+Host model weights are mounted at `~/.ollama/models` for fast startup — if a model is already cached, the pull is a no-op.
 
 ```bash
 # Manual docker run (equivalent to run-bench.sh):
 docker run --rm -it \
-    --network host \
     -v $(pwd):/workspace \
+    -v ~/.ollama/models:/root/.ollama/models \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -e OLLAMA_MODEL=qwen3.6:27b \
     autoresearch-bench \
     python benchmark/bench_edit_quality.py --models qwen3.6:27b --trials 5
 ```
