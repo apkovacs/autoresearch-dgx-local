@@ -101,8 +101,40 @@ def aggregate_e2e(rows: list[dict]) -> list[dict]:
     return processed
 
 
+def aggregate_trace(rows: list[dict]) -> dict:
+    """Aggregate Level 4 (trace quality) results by label (model/mode)."""
+    by_label = defaultdict(list)
+    for r in rows:
+        by_label[r["label"]].append(r)
+
+    def total(trials, key):
+        return sum(int(t.get(key, 0) or 0) for t in trials)
+
+    result = {}
+    for label, trials in by_label.items():
+        experiments = total(trials, "experiments")
+        tool_calls = total(trials, "tool_calls")
+        friction = sum(
+            total(trials, k)
+            for k in ("direct_train", "redirect", "chained_git", "background", "poll_runlog")
+        )
+        result[label] = {
+            "sessions": len(trials),
+            "experiments": experiments,
+            "tool_calls": tool_calls,
+            "calls_per_exp": tool_calls / experiments if experiments else 0.0,
+            "denials": total(trials, "denials"),
+            "tool_errors": total(trials, "tool_errors"),
+            "repeated_calls": total(trials, "repeated_calls"),
+            "redundant_reads": total(trials, "redundant_reads"),
+            "friction": friction,
+            "output_tokens": total(trials, "output_tokens"),
+        }
+    return result
+
+
 def generate_html(edit_quality: dict, harness: dict, e2e: list[dict],
-                  results_dir: Path) -> str:
+                  trace: dict, results_dir: Path) -> str:
     """Generate a self-contained HTML dashboard."""
 
     # Prepare chart data
@@ -265,6 +297,29 @@ def generate_html(edit_quality: dict, harness: dict, e2e: list[dict],
   </table>'''}
 </div>
 
+<!-- Level 4: Trace Quality -->
+<div class="card" style="grid-column: 1 / -1;">
+  <h2>Level 4: Trace Quality</h2>
+  <h3>Agentic overhead per model/mode &mdash; ideal is ~7 tool calls per experiment, zero denials, zero friction</h3>
+  {"<div class='empty'>No trace quality results yet. Run: bash benchmark/run-bench.sh trace --label model/mode</div>" if not trace else f'''
+  <table>
+    <tr><th>Model / Mode</th><th>Sessions</th><th>Experiments</th><th>Tool Calls</th><th>Calls/Exp</th><th>Denials</th><th>Errors</th><th>Repeats</th><th>Re-reads</th><th>Friction</th><th>Output Tokens</th></tr>
+    {"".join(f"""<tr>
+      <td>{label}</td>
+      <td>{trace[label]['sessions']}</td>
+      <td>{trace[label]['experiments']}</td>
+      <td>{trace[label]['tool_calls']}</td>
+      <td class='{"good" if 0 < trace[label]["calls_per_exp"] <= 10 else "warn" if trace[label]["calls_per_exp"] <= 15 else "bad"}'><strong>{trace[label]['calls_per_exp']:.1f}</strong></td>
+      <td class='{"good" if trace[label]["denials"] == 0 else "bad"}'>{trace[label]['denials']}</td>
+      <td class='{"good" if trace[label]["tool_errors"] == 0 else "warn"}'>{trace[label]['tool_errors']}</td>
+      <td>{trace[label]['repeated_calls']}</td>
+      <td>{trace[label]['redundant_reads']}</td>
+      <td class='{"good" if trace[label]["friction"] == 0 else "warn" if trace[label]["friction"] <= 3 else "bad"}'>{trace[label]['friction']}</td>
+      <td>{trace[label]['output_tokens']}</td>
+    </tr>""" for label in trace)}
+  </table>'''}
+</div>
+
 </div>
 
 <div class="footer">
@@ -352,20 +407,22 @@ def main():
     edit_quality_rows = read_tsv(results_dir / "edit_quality.tsv")
     harness_rows = read_tsv(results_dir / "harness_comparison.tsv")
     e2e_rows = read_tsv(results_dir / "e2e.tsv")
+    trace_rows = read_tsv(results_dir / "trace_quality.tsv")
 
     # Aggregate
     edit_quality = aggregate_edit_quality(edit_quality_rows)
     harness = aggregate_harness(harness_rows)
     e2e = aggregate_e2e(e2e_rows)
+    trace = aggregate_trace(trace_rows)
 
-    has_data = edit_quality or harness or e2e
+    has_data = edit_quality or harness or e2e or trace
     if not has_data:
         print("No benchmark results found. Run some benchmarks first:")
         print("  bash benchmark/run-bench.sh edit-quality --models qwen3.6:27b --trials 5")
         print("  bash benchmark/run-bench.sh harness --adapters ollama_raw --trials 5")
 
     # Generate
-    html = generate_html(edit_quality, harness, e2e, results_dir)
+    html = generate_html(edit_quality, harness, e2e, trace, results_dir)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

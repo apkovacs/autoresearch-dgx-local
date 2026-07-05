@@ -21,6 +21,11 @@
 #   DOCKER_IMAGE      Base Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)
 #   SHM_SIZE          Shared memory size (default: 64gb)
 #   OLLAMA_KEEP_ALIVE Model unload delay after last request (default: 0, unload immediately)
+#   OLLAMA_GGUF       Host path to a local GGUF file to import instead of pulling
+#                     (for community quants not in the Ollama library, e.g.
+#                     DeepSeek V4 Flash Dwarf Star). OLLAMA_MODEL becomes the
+#                     name of the imported model.
+#   OLLAMA_NUM_CTX    Context window for imported GGUF models (default: 32768)
 
 set -euo pipefail
 
@@ -31,14 +36,19 @@ OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+OLLAMA_GGUF="${OLLAMA_GGUF:-}"
+OLLAMA_NUM_CTX="${OLLAMA_NUM_CTX:-32768}"
 CONTAINER_NAME="autoresearch-dgx-local-agent"
 MAX_RESTARTS=3
 RESTART_COOLDOWN=10
 EXPERIMENTS_PER_SESSION=30
+AGENT_MODE="${AGENT_MODE:-guarded}"
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --mode)
+            AGENT_MODE="$2"; shift 2 ;;
         --max-restarts)
             MAX_RESTARTS="$2"; shift 2 ;;
         --no-restart)
@@ -46,11 +56,18 @@ while [[ $# -gt 0 ]]; do
         --experiments-per-session)
             EXPERIMENTS_PER_SESSION="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: bash run-dgx-agent.sh [--max-restarts N] [--no-restart] [--experiments-per-session N] [-h|--help]"
+            echo "Usage: bash run-dgx-agent.sh [--mode guarded|minimal] [--max-restarts N] [--no-restart] [--experiments-per-session N] [-h|--help]"
             echo ""
             echo "Launches the autonomous autoresearch agent with a local LLM."
             echo ""
             echo "Options:"
+            echo "  --mode MODE                  Agent mode (default: guarded)"
+            echo "                                 guarded — behavioral guardrails for local models:"
+            echo "                                   output token cap, action-first prompt, narrow"
+            echo "                                   permission allowlist, explicit rules"
+            echo "                                 minimal — Karpathy's original design for capable"
+            echo "                                   models: program.md drives everything, no token"
+            echo "                                   cap, all permissions granted, facts-only CLAUDE.md"
             echo "  --max-restarts N             Auto-restart agent up to N times (default: 3)"
             echo "  --no-restart                 Disable auto-restart (exit on first stop)"
             echo "  --experiments-per-session N   Restart for fresh context after N experiments (default: 30)"
@@ -63,6 +80,11 @@ while [[ $# -gt 0 ]]; do
             echo "  DOCKER_IMAGE     Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)"
             echo "  SHM_SIZE         Shared memory (default: 64gb)"
             echo "  OLLAMA_KEEP_ALIVE  Model unload delay (default: 0 = unload immediately)"
+            echo "  OLLAMA_GGUF      Path to a local GGUF file to import instead of pulling"
+            echo "  OLLAMA_NUM_CTX   Context window for imported GGUF (default: 32768)"
+            echo ""
+            echo "Custom GGUF example (DeepSeek V4 Flash Dwarf Star quant):"
+            echo "  OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf bash run-dgx-agent.sh"
             echo ""
             echo "Tested models:"
             echo "  qwen3.6:27b          ~18GB  Strong code reasoning (default)"
@@ -79,6 +101,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ "$AGENT_MODE" != "guarded" ] && [ "$AGENT_MODE" != "minimal" ]; then
+    echo "ERROR: --mode must be 'guarded' or 'minimal' (got: $AGENT_MODE)"
+    exit 1
+fi
+
 # --- Pre-flight checks ---
 echo "=== DGX Spark Autoresearch Agent Launcher ==="
 echo ""
@@ -93,12 +120,33 @@ if ! docker info &>/dev/null; then
     exit 1
 fi
 
+# --- Custom GGUF import (community quants not in the Ollama library) ---
+GGUF_ARGS=()
+if [ -n "$OLLAMA_GGUF" ]; then
+    if [ ! -f "$OLLAMA_GGUF" ]; then
+        echo "ERROR: OLLAMA_GGUF file not found: $OLLAMA_GGUF"
+        exit 1
+    fi
+    # If the user didn't override OLLAMA_MODEL, derive a name from the filename
+    if [ "$OLLAMA_MODEL" = "qwen3.6:27b" ]; then
+        OLLAMA_MODEL=$(basename "$OLLAMA_GGUF" .gguf | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-*$//')
+        echo "Derived model name from GGUF filename: $OLLAMA_MODEL"
+    fi
+    GGUF_ARGS=(
+        -v "$OLLAMA_GGUF":/gguf/model.gguf:ro
+        -e OLLAMA_GGUF_FILE=/gguf/model.gguf
+        -e OLLAMA_NUM_CTX="$OLLAMA_NUM_CTX"
+    )
+fi
+
 # --- Create persistent directories ---
 mkdir -p "$SHARD_CACHE_DIR"
 mkdir -p "$OLLAMA_MODELS"
 
 echo "Configuration:"
+echo "  Agent mode:       $AGENT_MODE"
 echo "  LLM model:        $OLLAMA_MODEL"
+[ -n "$OLLAMA_GGUF" ] && echo "  Custom GGUF:      $OLLAMA_GGUF (num_ctx=$OLLAMA_NUM_CTX)"
 echo "  Docker image:     $DOCKER_IMAGE"
 echo "  Shard cache:      $SHARD_CACHE_DIR"
 echo "  Ollama models:    $OLLAMA_MODELS"
@@ -170,9 +218,27 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Pull the model (skips if already cached via volume mount)
-echo "[start] Pulling model: $OLLAMA_MODEL ..."
-ollama pull "$OLLAMA_MODEL"
+# Pull or import the model
+if [ -n "${OLLAMA_GGUF_FILE:-}" ]; then
+    # Custom GGUF import (e.g. DeepSeek V4 Flash Dwarf Star quant).
+    # ollama create hashes the file into the blob store; since the model
+    # store is a persistent volume mount, this is a one-time cost — later
+    # runs detect the existing model and skip the import.
+    if ollama show "$OLLAMA_MODEL" &>/dev/null; then
+        echo "[start] Custom model already imported: $OLLAMA_MODEL"
+    else
+        echo "[start] Importing GGUF as $OLLAMA_MODEL (num_ctx=${OLLAMA_NUM_CTX:-32768})..."
+        echo "        Large files take several minutes to hash on first import."
+        ollama create "$OLLAMA_MODEL" -f /dev/stdin <<GGUFMODELFILE
+FROM $OLLAMA_GGUF_FILE
+PARAMETER num_ctx ${OLLAMA_NUM_CTX:-32768}
+GGUFMODELFILE
+    fi
+else
+    # Pull from the Ollama library (skips if already cached via volume mount)
+    echo "[start] Pulling model: $OLLAMA_MODEL ..."
+    ollama pull "$OLLAMA_MODEL"
+fi
 
 # Cap output tokens to prevent degenerate repetitive thinking loops.
 # Some models (especially Gemma 4) can enter infinite reasoning cycles
@@ -180,13 +246,19 @@ ollama pull "$OLLAMA_MODEL"
 # the entire output budget without ever emitting a tool call.
 # num_predict limits each completion to ~16K tokens — enough for any
 # legitimate tool call sequence, short enough to break the loop.
-echo "[start] Creating output-capped model alias..."
-ollama create "${OLLAMA_MODEL}-capped" -f /dev/stdin <<MODELFILE
+# Minimal mode skips the cap: capable models don't loop, and capping
+# would contaminate any measurement of the model's natural behavior.
+if [ "${AGENT_MODE:-guarded}" = "guarded" ]; then
+    echo "[start] Creating output-capped model alias..."
+    ollama create "${OLLAMA_MODEL}-capped" -f /dev/stdin <<MODELFILE
 FROM $OLLAMA_MODEL
 PARAMETER num_predict 16384
 MODELFILE
-OLLAMA_MODEL="${OLLAMA_MODEL}-capped"
-echo "  Using capped model: $OLLAMA_MODEL (num_predict=16384)"
+    OLLAMA_MODEL="${OLLAMA_MODEL}-capped"
+    echo "  Using capped model: $OLLAMA_MODEL (num_predict=16384)"
+else
+    echo "[start] Minimal mode — no output token cap."
+fi
 
 # Configure Claude Code to use local Ollama
 export ANTHROPIC_BASE_URL="http://localhost:11434"
@@ -206,11 +278,15 @@ git config --global --add safe.directory /workspace
 git config --global user.email "agent@autoresearch.local"
 git config --global user.name "AutoResearch Agent"
 
-# Configure Claude Code permissions for autonomous operation
-# Scoped to the experiment: agent can only edit train.py, run training,
-# read the workspace, and use git. Cannot modify other scripts, install
-# packages, or access files outside the workspace.
+# Configure Claude Code permissions for autonomous operation.
+# Guarded mode: narrow allowlist scoped to the experiment — the agent can
+# only edit train.py, run training, read the workspace, and use git.
+# Minimal mode: no settings file — the agent runs with bypassPermissions
+# so we observe the model's natural behavior with zero permission friction
+# (the Docker container is the sandbox).
 mkdir -p /workspace/.claude
+rm -f /workspace/.claude/settings.json
+if [ "${AGENT_MODE:-guarded}" = "guarded" ]; then
 cat > /workspace/.claude/settings.json << 'SETTINGS'
 {
   "permissions": {
@@ -279,6 +355,7 @@ cat > /workspace/.claude/settings.json << 'SETTINGS'
   }
 }
 SETTINGS
+fi
 
 # Symlink cache so the agent can find data at the default path
 ln -sfn /cache/autoresearch /root/.cache/autoresearch 2>/dev/null || true
@@ -401,8 +478,31 @@ echo "Logged to results.tsv: $1  val_bpb=$2  mem=$3GB  status=$4  $5  [$TS]"
 LOGEXP
 chmod +x /workspace/log_result.sh
 
-# Write CLAUDE.md so the agent knows the environment is ready
-# This overrides the Setup section of program.md
+# Write CLAUDE.md so the agent knows the environment is ready.
+# Guarded mode: action-first structure with explicit rules (small models
+# respond better to imperative first-action prompts).
+# Minimal mode: environment facts only — program.md drives the loop,
+# exactly as in Karpathy's original design.
+if [ "${AGENT_MODE:-guarded}" = "minimal" ]; then
+cat > /workspace/CLAUDE.md << 'MINIMALMD'
+# Environment notes
+
+Setup is already complete — do not repeat it:
+- Training data is prepared (do not run prepare.py)
+- The experiment branch is checked out and results.tsv exists
+- Git identity is configured
+
+Helper scripts available in the workspace:
+- `bash run_experiment.sh` — syntax-checks train.py, runs training (~5 min),
+  prints val_bpb / peak_vram_mb, and heartbeats so the call doesn't time out.
+  Use this instead of running train.py directly.
+- `bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION` — appends a
+  row to results.tsv (append redirection is unavailable in this environment).
+- `bash revert_train.sh` — restores the last working train.py
+
+Follow program.md for the research loop.
+MINIMALMD
+else
 cat > /workspace/CLAUDE.md << CLAUDEMD
 # START HERE — Setup is done, begin experimenting immediately
 
@@ -453,9 +553,10 @@ Repeat this cycle to beat the baseline val_bpb:
 - \`bash revert_train.sh\` — restore last working train.py
 - \`bash run_experiment.sh\` auto-checks syntax before training
 CLAUDEMD
+fi
 
 echo ""
-echo "=== Launching autonomous agent ==="
+echo "=== Launching autonomous agent ($AGENT_MODE mode) ==="
 echo "  The agent will read program.md and begin the experiment loop."
 echo "  Press Ctrl+C to stop."
 echo ""
@@ -476,7 +577,19 @@ with open('logs/events.jsonl', 'a') as f:
 " "$1"
 }
 
-log_event '{"event": "orchestrator_start", "mode": "base", "tag": "agent", "config": "run-dgx-agent.sh"}'
+log_event "{\"event\": \"orchestrator_start\", \"mode\": \"base\", \"tag\": \"agent\", \"agent_mode\": \"${AGENT_MODE:-guarded}\", \"config\": \"run-dgx-agent.sh\"}"
+
+# Permission handling per mode:
+# - guarded: dontAsk + the narrow allowlist in .claude/settings.json
+# - minimal: bypassPermissions — zero permission friction, the Docker
+#   container is the sandbox. IS_SANDBOX=1 lets Claude Code accept
+#   bypassPermissions while running as root inside the container.
+if [ "${AGENT_MODE:-guarded}" = "minimal" ]; then
+    PERMISSION_FLAGS=(--permission-mode bypassPermissions)
+    export IS_SANDBOX=1
+else
+    PERMISSION_FLAGS=(--permission-mode dontAsk)
+fi
 
 echo "  Event log:    logs/events.jsonl"
 echo "  Transcript:   logs/transcripts/agent.jsonl"
@@ -527,6 +640,32 @@ while true; do
         fi
 
         # Update CLAUDE.md for resume — forward-looking, no history
+        if [ "${AGENT_MODE:-guarded}" = "minimal" ]; then
+        cat > /workspace/CLAUDE.md << MINRESUMEMD
+# Environment notes (resumed session)
+
+Setup is already complete — do not repeat it:
+- Training data is prepared (do not run prepare.py)
+- The experiment branch is checked out and results.tsv exists
+
+Current state:
+- Best val_bpb so far: **$BEST_BPB**
+- Baseline val_bpb: $BASELINE_BPB
+- Experiments completed: $BEFORE_COUNT
+$([ "$HAS_BASELINE" = false ] && echo "- The baseline has NOT been run yet — run it first.")
+
+Helper scripts available in the workspace:
+- \`bash run_experiment.sh\` — syntax-checks train.py, runs training (~5 min),
+  prints val_bpb / peak_vram_mb, and heartbeats so the call doesn't time out.
+  Use this instead of running train.py directly.
+- \`bash log_result.sh COMMIT VAL_BPB MEM_GB STATUS DESCRIPTION\` — appends a
+  row to results.tsv (append redirection is unavailable in this environment).
+- \`bash revert_train.sh\` — restores the last working train.py
+
+Follow program.md for the research loop. Review results.tsv for what has
+been tried already.
+MINRESUMEMD
+        else
         cat > /workspace/CLAUDE.md << RESUMEMD
 # START HERE — Resume experimenting immediately
 
@@ -565,6 +704,7 @@ $([ "$HAS_BASELINE" = false ] && echo "The baseline has NOT been run yet. Run \`
 - \`bash revert_train.sh\` — restore last working train.py
 - \`bash run_experiment.sh\` auto-checks syntax before training
 RESUMEMD
+        fi
 
         log_event "{\"event\": \"agent_restart\", \"attempt\": $ATTEMPT, \"experiments_before\": $BEFORE_COUNT, \"best_bpb\": \"$BEST_BPB\"}"
         echo "  Experiments so far: $BEFORE_COUNT"
@@ -602,7 +742,7 @@ RESUMEMD
 
     # Launch Claude Code with stream-json output
     set +e
-    claude -p --permission-mode dontAsk --verbose --output-format stream-json "$(cat program.md)" \
+    claude -p "${PERMISSION_FLAGS[@]}" --verbose --output-format stream-json "$(cat program.md)" \
         2>&1 | python3 stream_formatter.py "$TRANSCRIPT"
     EXIT_CODE=$?
     set -e
@@ -671,6 +811,7 @@ docker run -it --rm \
     -v "$(pwd)":/workspace \
     -v "$SHARD_CACHE_DIR":/cache/autoresearch \
     -v "$OLLAMA_MODELS":/root/.ollama/models \
+    ${GGUF_ARGS[@]+"${GGUF_ARGS[@]}"} \
     -e AUTORESEARCH_CACHE_DIR=/cache/autoresearch \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
     -e OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
@@ -679,6 +820,7 @@ docker run -it --rm \
     -e MAX_RESTARTS="$MAX_RESTARTS" \
     -e RESTART_COOLDOWN="$RESTART_COOLDOWN" \
     -e EXPERIMENTS_PER_SESSION="$EXPERIMENTS_PER_SESSION" \
+    -e AGENT_MODE="$AGENT_MODE" \
     -e NCCL_P2P_DISABLE=1 \
     -e TORCH_CUDA_ARCH_LIST=12.0 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
