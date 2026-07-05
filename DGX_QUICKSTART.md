@@ -47,7 +47,11 @@ Run the full agent loop with Claude Code (best for frontier API models or highly
 bash run-dgx-agent.sh
 ```
 
-This starts Ollama with Qwen3.6 27B (default), installs Claude Code, and begins the experiment loop defined in `program.md`.
+This starts Ollama with Qwen3.6 27B (default), installs Claude Code, and begins the experiment loop defined in `program.md`. The default (guarded) mode adds behavioral guardrails for local models; for highly capable models, minimal mode runs Karpathy's original design with no guardrails:
+
+```bash
+bash run-dgx-agent.sh --mode minimal
+```
 
 ### Use a Different Model
 
@@ -55,6 +59,10 @@ This starts Ollama with Qwen3.6 27B (default), installs Claude Code, and begins 
 OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh     # Gemma 4 26B
 OLLAMA_MODEL=gemma4:e4b bash run-dgx-agent.sh     # Gemma 4 E4B (more memory headroom)
 OLLAMA_MODEL=qwen2.5-coder:14b bash run-dgx-agent.sh  # Code-specialized
+
+# Import a local GGUF that isn't in the Ollama library (e.g. DeepSeek V4 Flash Dwarf Star)
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+    bash run-dgx-agent.sh --mode minimal
 ```
 
 Run `bash run-dgx-agent.sh --help` to see all tested models.

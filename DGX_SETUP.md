@@ -131,27 +131,48 @@ Any Ollama-compatible model works — just set `OLLAMA_MODEL` to its tag.
 
 ### Choosing Your Agent Mode
 
-Two modes are available, depending on your model's capabilities:
+Three modes span the spectrum from maximum scaffolding to Karpathy's original design:
 
-| Scenario | Recommended mode | Script | Dependencies |
+| Scenario | Recommended mode | Command | Dependencies |
 |---|---|---|---|
-| Frontier API (Claude, GPT-4) | Full agent | `run-dgx-agent.sh` | Claude Code + Ollama |
-| Large local (27B+, reliable tool use) | Full agent | `run-dgx-agent.sh` | Claude Code + Ollama |
-| Local models (any size) | Hypothesis generator | `run-dgx-local.sh` | Ollama only |
+| Highly capable local models (e.g. DeepSeek V4 Flash) | Minimal agent | `run-dgx-agent.sh --mode minimal` | Claude Code + Ollama |
+| Frontier API (Claude, GPT-4) | Minimal agent | `run-dgx-agent.sh --mode minimal` | Claude Code + Ollama |
+| Large local (27B+, reliable tool use) | Guarded agent | `run-dgx-agent.sh` | Claude Code + Ollama |
 | Local models with reliability issues | Hypothesis generator | `run-dgx-local.sh` | Ollama only |
 
-**Full agent mode** (`run-dgx-agent.sh`): The LLM drives the entire experiment loop using Claude Code's tool-use framework (Edit, Bash, Read). More flexible — the agent can inspect logs, try multi-step reasoning, and make creative decisions about what to investigate. Requires models that can reliably follow multi-step instructions and use tools correctly.
+**Minimal agent mode** (`run-dgx-agent.sh --mode minimal`): Karpathy's original design — program.md drives everything, the model runs with all permissions granted, no output token cap, and a facts-only CLAUDE.md. The infrastructure that's invisible to the model (session restarts, deterministic logging, `run_experiment.sh` heartbeat) stays. Use the trace-quality benchmark (`bash benchmark/run-bench.sh trace`) to verify a model is capable enough for this mode before committing GPU time.
+
+**Guarded agent mode** (`run-dgx-agent.sh`, default): Same full agent loop, but with behavioral guardrails for smaller local models: an output token cap that breaks repetitive thinking loops, an action-first CLAUDE.md with explicit rules, and a narrow permission allowlist.
 
 **Hypothesis generator mode** (`run-dgx-local.sh`): The LLM only proposes edits as structured JSON. Everything else (git, training, logging, keep/revert) is handled deterministically by the script. No Claude Code or Node.js needed. Higher reliability — no permission denials, no tool confusion, no repetitive thinking loops. Lower flexibility — the agent can't inspect training logs or do multi-step reasoning.
 
 ```bash
-# Full agent mode (for frontier or highly capable local models)
+# Minimal agent mode (original design, for highly capable models)
+bash run-dgx-agent.sh --mode minimal
+
+# Guarded agent mode (default, for capable local models)
 bash run-dgx-agent.sh
 
-# Hypothesis generator mode (recommended for local models)
+# Hypothesis generator mode (recommended for smaller local models)
 bash run-dgx-local.sh
 bash run-dgx-local.sh --max-experiments 100
 ```
+
+### Custom GGUF Models (e.g. DeepSeek V4 Flash)
+
+Community quants not published in the Ollama library can be imported from a local GGUF file with `OLLAMA_GGUF`:
+
+```bash
+# DeepSeek V4 Flash Dwarf Star quant (~81GB, ~2.3 bits/param) in minimal mode
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+OLLAMA_NUM_CTX=32768 \
+bash run-dgx-agent.sh --mode minimal
+```
+
+The file is mounted read-only into the container and imported via `ollama create` (a one-time cost — the model store is a persistent volume, so later runs detect the existing model and skip the import). `OLLAMA_NUM_CTX` sets the context window (default 32768; Ollama's own default of 4096 is far too small for the agent loop).
+
+Note the memory math: an ~81GB model plus training leaves little headroom on 128GB unified memory. Keep `OLLAMA_KEEP_ALIVE=0` (the default) so the model unloads during training runs.
 
 ### Memory Budget
 

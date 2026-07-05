@@ -23,8 +23,19 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Pull model if OLLAMA_MODEL is set (run-bench.sh passes this)
-if [ -n "${OLLAMA_MODEL:-}" ]; then
+# Pull or import model if OLLAMA_MODEL is set (run-bench.sh passes this)
+if [ -n "${OLLAMA_GGUF_FILE:-}" ]; then
+    # Custom GGUF import — one-time cost, model store is a persistent mount
+    if ollama show "${OLLAMA_MODEL:?OLLAMA_MODEL must be set with OLLAMA_GGUF}" &>/dev/null; then
+        echo "[bench] Custom model already imported: $OLLAMA_MODEL"
+    else
+        echo "[bench] Importing GGUF as $OLLAMA_MODEL (num_ctx=${OLLAMA_NUM_CTX:-32768})..."
+        ollama create "$OLLAMA_MODEL" -f /dev/stdin <<GGUFMODELFILE
+FROM $OLLAMA_GGUF_FILE
+PARAMETER num_ctx ${OLLAMA_NUM_CTX:-32768}
+GGUFMODELFILE
+    fi
+elif [ -n "${OLLAMA_MODEL:-}" ]; then
     echo "[bench] Pulling model: $OLLAMA_MODEL"
     ollama pull "$OLLAMA_MODEL"
     echo "[bench] Model ready."

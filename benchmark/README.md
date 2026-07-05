@@ -1,6 +1,6 @@
 # Autoresearch Agent Benchmark
 
-Three-level evaluation suite for comparing models and harnesses on the autoresearch experiment loop. Runs inside a Docker container with all adapter dependencies pre-installed.
+Four-level evaluation suite for comparing models and harnesses on the autoresearch experiment loop. Runs inside a Docker container with all adapter dependencies pre-installed.
 
 ## Quick Start
 
@@ -16,6 +16,9 @@ bash benchmark/run-bench.sh harness --adapters ollama_raw aider --model qwen3.6:
 
 # Level 3: End-to-end (needs GPU)
 BENCH_GPU=1 bash benchmark/run-bench.sh e2e --harness hyp --model qwen3.6:27b --budget 10
+
+# Level 4: Trace quality — analyze agent transcripts (no GPU, no Ollama)
+bash benchmark/run-bench.sh trace --label "qwen3.6:27b/guarded"
 
 # Interactive shell inside the container
 bash benchmark/run-bench.sh shell
@@ -76,6 +79,39 @@ BENCH_GPU=1 bash benchmark/run-bench.sh e2e \
 
 **Harnesses:** `hyp` (run-dgx-local.sh) or `agent` (run-dgx-agent.sh).
 
+### Level 4: Trace Quality (no GPU, no Ollama)
+
+Measures how suited a model is to the original agent design by analyzing its execution traces: Claude Code stream-json transcripts (`logs/transcripts/*.jsonl`) and the orchestrator event log (`logs/events.jsonl`). Run it after any `run-dgx-agent.sh` session.
+
+```bash
+bash benchmark/run-bench.sh trace \
+    --transcripts logs/transcripts \
+    --events logs/events.jsonl \
+    --label "deepseek-v4-flash-dwarf/minimal"
+```
+
+**Measures:**
+- **Tool-call efficiency** — calls per completed experiment vs. the ideal ~7
+- **Permission denials** — tool errors mentioning permission/approval
+- **Repeated identical calls** and **redundant file reads**
+- **Friction indicators** — direct `python train.py`, shell redirection, `&&`-chained git, backgrounded commands, `run.log` polling
+- **Thinking volume and output tokens** — reasoning overhead
+- **Degenerate sessions** — restarts with zero new experiments (from events.jsonl)
+
+Use `--label model/mode` so runs from different models and agent modes (guarded vs. minimal) can be compared side by side in the dashboard. This is the objective test for whether a model qualifies for `--mode minimal`.
+
+## Custom GGUF Models
+
+Community quants not in the Ollama library (e.g. DeepSeek V4 Flash Dwarf Star) can be imported from a local GGUF file:
+
+```bash
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+bash benchmark/run-bench.sh edit-quality --models deepseek-v4-flash-dwarf --trials 5
+```
+
+The file is mounted read-only and imported via `ollama create` with `OLLAMA_NUM_CTX` (default 32768) as the context window. The import is a one-time cost — the model store is a persistent mount, so later runs skip it.
+
 ## Dashboard
 
 Generate an HTML dashboard from benchmark results:
@@ -88,6 +124,7 @@ Opens `benchmark/results/dashboard.html` — a self-contained page with Chart.js
 - **Level 1:** Grouped bar chart of success rates by model (JSON, schema, apply, syntax)
 - **Level 2:** Dual-axis chart comparing harness success rate and latency
 - **Level 3:** Table with baseline/best BPB, improvement percentage, wall time
+- **Level 4:** Table of agentic overhead by model/mode (calls per experiment, denials, friction)
 
 Use `--no-open` to generate without opening in a browser.
 

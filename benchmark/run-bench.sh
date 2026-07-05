@@ -26,6 +26,8 @@ set -euo pipefail
 BENCH_IMAGE="${BENCH_IMAGE:-autoresearch-bench}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.6:27b}"
+OLLAMA_GGUF="${OLLAMA_GGUF:-}"
+OLLAMA_NUM_CTX="${OLLAMA_NUM_CTX:-32768}"
 BENCH_GPU="${BENCH_GPU:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -48,6 +50,7 @@ if [ $# -lt 1 ]; then
     echo "  edit-quality   Level 1: Edit quality (no GPU)"
     echo "  harness        Level 2: Harness comparison (mostly no GPU)"
     echo "  e2e            Level 3: End-to-end (requires GPU)"
+    echo "  trace          Level 4: Trace quality — agentic overhead from transcripts (no GPU)"
     echo "  dashboard      Generate HTML dashboard from results"
     echo "  shell          Interactive shell inside the benchmark container"
     echo ""
@@ -78,6 +81,9 @@ case "$LEVEL" in
         BENCH_GPU=1
         CMD=(python benchmark/bench_e2e.py "$@")
         ;;
+    trace|l4)
+        CMD=(python benchmark/bench_trace_quality.py "$@")
+        ;;
     dashboard)
         CMD=(python benchmark/bench_dashboard.py "$@")
         ;;
@@ -86,7 +92,7 @@ case "$LEVEL" in
         ;;
     *)
         echo "Unknown level: $LEVEL"
-        echo "Use: edit-quality, harness, e2e, dashboard, or shell"
+        echo "Use: edit-quality, harness, e2e, trace, dashboard, or shell"
         exit 1
         ;;
 esac
@@ -103,6 +109,19 @@ DOCKER_ARGS=(
 
 if [ "$BENCH_GPU" = "1" ]; then
     DOCKER_ARGS+=(--gpus all)
+fi
+
+# Custom GGUF import (community quants not in the Ollama library)
+if [ -n "$OLLAMA_GGUF" ]; then
+    if [ ! -f "$OLLAMA_GGUF" ]; then
+        echo "ERROR: OLLAMA_GGUF file not found: $OLLAMA_GGUF"
+        exit 1
+    fi
+    DOCKER_ARGS+=(
+        -v "$OLLAMA_GGUF":/gguf/model.gguf:ro
+        -e OLLAMA_GGUF_FILE=/gguf/model.gguf
+        -e OLLAMA_NUM_CTX="$OLLAMA_NUM_CTX"
+    )
 fi
 
 echo "=== Autoresearch Benchmark ==="

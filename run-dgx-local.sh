@@ -18,6 +18,8 @@
 #   DOCKER_IMAGE      Base Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)
 #   SHM_SIZE          Shared memory size (default: 64gb)
 #   OLLAMA_KEEP_ALIVE Model unload delay after last request (default: 0, unload immediately)
+#   OLLAMA_GGUF       Host path to a local GGUF file to import instead of pulling
+#   OLLAMA_NUM_CTX    Context window for imported GGUF models (default: 32768)
 
 set -euo pipefail
 
@@ -28,6 +30,8 @@ OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/.ollama/models}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}"
 SHM_SIZE="${SHM_SIZE:-64gb}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+OLLAMA_GGUF="${OLLAMA_GGUF:-}"
+OLLAMA_NUM_CTX="${OLLAMA_NUM_CTX:-32768}"
 CONTAINER_NAME="autoresearch-dgx-local-hyp"
 MAX_EXPERIMENTS=50
 
@@ -53,6 +57,8 @@ while [[ $# -gt 0 ]]; do
             echo "  DOCKER_IMAGE     Docker image (default: nvcr.io/nvidia/pytorch:25.12-py3)"
             echo "  SHM_SIZE         Shared memory (default: 64gb)"
             echo "  OLLAMA_KEEP_ALIVE  Model unload delay (default: 0 = unload immediately)"
+            echo "  OLLAMA_GGUF      Path to a local GGUF file to import instead of pulling"
+            echo "  OLLAMA_NUM_CTX   Context window for imported GGUF (default: 32768)"
             echo ""
             echo "Tested models:"
             echo "  qwen3.6:27b          ~18GB  Strong code reasoning (default)"
@@ -86,6 +92,25 @@ if ! docker info &>/dev/null; then
     exit 1
 fi
 
+# --- Custom GGUF import (community quants not in the Ollama library) ---
+GGUF_ARGS=()
+if [ -n "$OLLAMA_GGUF" ]; then
+    if [ ! -f "$OLLAMA_GGUF" ]; then
+        echo "ERROR: OLLAMA_GGUF file not found: $OLLAMA_GGUF"
+        exit 1
+    fi
+    # If the user didn't override OLLAMA_MODEL, derive a name from the filename
+    if [ "$OLLAMA_MODEL" = "qwen3.6:27b" ]; then
+        OLLAMA_MODEL=$(basename "$OLLAMA_GGUF" .gguf | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-*$//')
+        echo "Derived model name from GGUF filename: $OLLAMA_MODEL"
+    fi
+    GGUF_ARGS=(
+        -v "$OLLAMA_GGUF":/gguf/model.gguf:ro
+        -e OLLAMA_GGUF_FILE=/gguf/model.gguf
+        -e OLLAMA_NUM_CTX="$OLLAMA_NUM_CTX"
+    )
+fi
+
 # --- Create persistent directories ---
 mkdir -p "$SHARD_CACHE_DIR"
 mkdir -p "$OLLAMA_MODELS"
@@ -93,6 +118,7 @@ mkdir -p "$OLLAMA_MODELS"
 echo "Configuration:"
 echo "  Mode:             hypothesis generator (deterministic loop)"
 echo "  LLM model:        $OLLAMA_MODEL"
+[ -n "$OLLAMA_GGUF" ] && echo "  Custom GGUF:      $OLLAMA_GGUF (num_ctx=$OLLAMA_NUM_CTX)"
 echo "  Docker image:     $DOCKER_IMAGE"
 echo "  Shard cache:      $SHARD_CACHE_DIR"
 echo "  Ollama models:    $OLLAMA_MODELS"
@@ -153,9 +179,23 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Pull the model
-echo "[start] Pulling model: $OLLAMA_MODEL ..."
-ollama pull "$OLLAMA_MODEL"
+# Pull or import the model
+if [ -n "${OLLAMA_GGUF_FILE:-}" ]; then
+    # Custom GGUF import — one-time cost, model store is a persistent mount
+    if ollama show "$OLLAMA_MODEL" &>/dev/null; then
+        echo "[start] Custom model already imported: $OLLAMA_MODEL"
+    else
+        echo "[start] Importing GGUF as $OLLAMA_MODEL (num_ctx=${OLLAMA_NUM_CTX:-32768})..."
+        echo "        Large files take several minutes to hash on first import."
+        ollama create "$OLLAMA_MODEL" -f /dev/stdin <<GGUFMODELFILE
+FROM $OLLAMA_GGUF_FILE
+PARAMETER num_ctx ${OLLAMA_NUM_CTX:-32768}
+GGUFMODELFILE
+    fi
+else
+    echo "[start] Pulling model: $OLLAMA_MODEL ..."
+    ollama pull "$OLLAMA_MODEL"
+fi
 
 echo ""
 echo "=== Environment ready ==="
@@ -480,6 +520,7 @@ docker run -it --rm \
     -v "$(pwd)":/workspace \
     -v "$SHARD_CACHE_DIR":/cache/autoresearch \
     -v "$OLLAMA_MODELS":/root/.ollama/models \
+    ${GGUF_ARGS[@]+"${GGUF_ARGS[@]}"} \
     -e AUTORESEARCH_CACHE_DIR=/cache/autoresearch \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
     -e OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
