@@ -290,3 +290,26 @@ CLI flags: `--max-restarts N` (default 3), `--no-restart` to disable, `--experim
 ```bash
 OLLAMA_MODEL=gemma4:e4b bash run-dgx-agent.sh
 ```
+
+## Custom GGUF Import Is Slow or Appears Hung
+
+**Symptom**: After `OLLAMA_GGUF=... bash run-dgx-agent.sh`, the launch sits at "Importing GGUF..." for a long time with no progress output.
+
+**Cause**: `ollama create` hashes the entire file into its blob store on first import. For a large quant like DeepSeek V4 Flash Dwarf Star (~81 GB), this takes several minutes and prints nothing while hashing.
+
+**Fix**: Wait it out — it's a one-time cost. The model store (`~/.ollama/models`) is a persistent volume mount, so subsequent launches detect the imported model and skip the import entirely. If you re-launch and it imports again, check that `OLLAMA_MODELS` points to the same host directory across runs.
+
+## Out of Memory with Large GGUF Models
+
+**Symptom**: Training crashes or the machine becomes unresponsive when running an ~81 GB model alongside training.
+
+**Cause**: On 128 GB unified memory, a frontier-scale quant leaves little headroom. If the LLM stays resident during training (`OLLAMA_KEEP_ALIVE` != 0), the combined footprint exceeds physical memory.
+
+**Fix**: Keep `OLLAMA_KEEP_ALIVE=0` (the default) so Ollama unloads the model during training runs, and lower `OLLAMA_NUM_CTX` (e.g. 16384 or 8192) to shrink the KV cache during inference:
+
+```bash
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+OLLAMA_NUM_CTX=16384 \
+bash run-dgx-agent.sh --mode minimal
+```

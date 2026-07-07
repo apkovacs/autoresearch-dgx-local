@@ -67,6 +67,27 @@ OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf OLLAMA_MODEL=deepseek-v4-flash
 
 Run `bash run-dgx-agent.sh --help` to see all tested models.
 
+## Frontier-Scale Local: DeepSeek V4 Flash (Dwarf Star)
+
+The Dwarf Star selective quantization compresses DeepSeek V4 Flash (284B-parameter MoE, 13B active) from 568 GB to ~81 GB — small enough to fit the Spark's 128 GB unified memory. This is the target model for **minimal mode**: it was designed for agentic workflows with strict tool calling, so it should run the original autoresearch design without the guardrails smaller local models need.
+
+Because the quant is a community GGUF release (not in the Ollama library), the launchers import it from a local file:
+
+```bash
+# 1. Download the Dwarf Star GGUF (~81 GB) to the Spark, e.g. ~/models/
+
+# 2. Launch in minimal mode — imported into Ollama automatically on first run
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+bash run-dgx-agent.sh --mode minimal
+```
+
+Notes:
+- First launch hashes the 81 GB file into the Ollama model store (several minutes); later runs skip it.
+- `OLLAMA_NUM_CTX` sets the context window (default 32768). Expect ~15–30 tok/s decode.
+- Keep `OLLAMA_KEEP_ALIVE=0` (the default) — the model must unload during training runs, as 81 GB plus PyTorch would exhaust unified memory.
+- After a session, run `bash benchmark/run-bench.sh trace --label "deepseek-v4-flash-dwarf/minimal"` to measure how cleanly the model executed the loop compared to guarded-mode models.
+
 ### Pre-built Docker Image (Faster Startup)
 
 Build once to skip dependency installation on every launch:
