@@ -15,8 +15,9 @@ What grew around it, over months of running local models on a DGX Spark and watc
 1. **DGX Spark adaptation** — SDPA fallback for flash-attn3, reduced hyperparameters, Docker containerization with OOM protection and persistent shard storage
 2. **Three agent modes spanning the capability spectrum** — because a 7B local model and a 284B frontier-scale model need completely different amounts of scaffolding
 3. **Custom GGUF support** — run community quants like DeepSeek V4 Flash "Dwarf Star" (284B MoE compressed to ~81 GB) that aren't in the Ollama library
-4. **A four-level benchmark suite** — objectively measure a model's edit quality, harness fit, end-to-end results, and agentic overhead before burning GPU-days on it
-5. **Meta-research orchestration** — game-theory-inspired strategies (island model, multi-armed bandit, iterated coopetition) that manage multiple competing/cooperating research branches on one GPU
+4. **Pluggable inference backends** — the hypothesis generator and benchmark suite speak to Ollama or any OpenAI-compatible server (llama-server, vLLM, ds4), opening the door to engine features Ollama lacks, like speculative decoding
+5. **A four-level benchmark suite** — objectively measure a model's edit quality, harness fit, end-to-end results, and agentic overhead before burning GPU-days on it
+6. **Meta-research orchestration** — game-theory-inspired strategies (island model, multi-armed bandit, iterated coopetition) that manage multiple competing/cooperating research branches on one GPU
 
 Inspired in part by [David-Barnes-Data-Imaginations/autoresearch-DGX-Spark](https://github.com/David-Barnes-Data-Imaginations/autoresearch-DGX-Spark).
 
@@ -69,6 +70,13 @@ bash run-dgx-agent.sh --mode minimal
 ```
 
 The file is imported once into the persistent Ollama model store; later runs skip the import. See [DGX_SETUP.md](DGX_SETUP.md#custom-gguf-models-eg-deepseek-v4-flash) for context-window settings and memory-headroom notes.
+
+The hypothesis generator can also bypass Ollama entirely and use any OpenAI-compatible server — useful for engines with speculative decoding:
+
+```bash
+INFERENCE_BACKEND=openai INFERENCE_URL=http://host.docker.internal:8080/v1 \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf bash run-dgx-local.sh
+```
 
 ### Multi-branch game strategies
 
@@ -166,7 +174,7 @@ run-dgx-game.sh             -- Docker launcher: meta-research orchestrator
 monitor-dgx.sh              -- real-time container monitoring
 monitor-game.sh             -- live game dashboard, event stream, transcript viewer
 
-hypothesis_generator.py     -- propose/apply edit engine for hypothesis generator mode
+hypothesis_generator.py     -- propose/apply edit engine (backends: Ollama, OpenAI-compatible)
 stream_formatter.py         -- live formatting + transcript capture of agent output
 orchestrator.py             -- game engine: schedules branches, migration, adoption
 hyperparams.py              -- hyperparameter extraction/injection for cross-branch migration

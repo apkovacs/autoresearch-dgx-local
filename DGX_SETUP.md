@@ -174,6 +174,28 @@ The file is mounted read-only into the container and imported via `ollama create
 
 Note the memory math: an ~81GB model plus training leaves little headroom on 128GB unified memory. Keep `OLLAMA_KEEP_ALIVE=0` (the default) so the model unloads during training runs.
 
+### Alternative Inference Backends (llama-server, vLLM, ds4)
+
+The hypothesis generator mode is not tied to Ollama. Set `INFERENCE_BACKEND=openai` to point it at any OpenAI-compatible server instead — llama.cpp's `llama-server`, vLLM, or antirez's ds4 engine. This is the integration seam for inference capabilities Ollama lacks, most importantly **speculative decoding**: `llama-server --draft-model` today, and DeepSeek's DSpark framework once llama.cpp gains SAR draft-head support ([llama.cpp #25096](https://github.com/ggml-org/llama.cpp/issues/25096)).
+
+```bash
+# 1. Start the server on the host (example: llama-server with the Dwarf Star GGUF)
+llama-server -m ~/models/deepseek-v4-flash-dwarf.gguf --port 8080 -c 32768
+
+# 2. Point the hypothesis generator at it — Ollama is skipped entirely
+INFERENCE_BACKEND=openai \
+INFERENCE_URL=http://host.docker.internal:8080/v1 \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+bash run-dgx-local.sh
+```
+
+Notes:
+- `INFERENCE_URL` is the URL **as seen from inside the container** — a server on the host is `http://host.docker.internal:<port>/v1` (the launcher maps this hostname automatically).
+- `OLLAMA_MODEL` still names the model, since OpenAI-compatible servers expect a model field in each request.
+- The external server manages its own model loading and memory. Make sure it unloads or is stopped during training runs if memory is tight — the launcher can't do that for it (unlike `OLLAMA_KEEP_ALIVE=0`).
+- The benchmark suite accepts the same two variables, so Ollama vs. llama-server vs. a speculative-decoding config can be compared on identical Level 1 metrics. See [benchmark/README.md](benchmark/README.md#alternative-inference-backends).
+- The full agent modes (`run-dgx-agent.sh`) still require Ollama for now — Claude Code speaks the Anthropic API, which Ollama implements but llama-server does not. An Anthropic-to-OpenAI proxy (e.g. LiteLLM) would be needed to bridge that; not yet built.
+
 ### Memory Budget
 
 With 128 GB unified memory:

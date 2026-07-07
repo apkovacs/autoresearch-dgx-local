@@ -75,6 +75,8 @@ bash run-dgx-agent.sh --mode minimal
 
 Use the trace-quality benchmark (`bash benchmark/run-bench.sh trace`) to verify a model executes the loop cleanly enough for minimal mode.
 
+The hypothesis generator mode is backend-agnostic: set `INFERENCE_BACKEND=openai` and `INFERENCE_URL` to use any OpenAI-compatible server (llama-server, vLLM, ds4) instead of in-container Ollama — the path to engine features like speculative decoding. See [DGX_SETUP.md](DGX_SETUP.md#alternative-inference-backends-llama-server-vllm-ds4).
+
 For faster startup, build a pre-built image that bakes in all dependencies:
 
 ```bash

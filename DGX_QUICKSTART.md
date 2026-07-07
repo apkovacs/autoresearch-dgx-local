@@ -39,6 +39,18 @@ bash run-dgx-local.sh --max-experiments 100         # set experiment budget
 
 No Claude Code or Node.js needed — just Ollama and Python. Higher reliability than the full agent mode: no permission denials, no tool confusion, no repetitive thinking loops.
 
+The backend doesn't have to be Ollama — any OpenAI-compatible server works (llama-server, vLLM, ds4), which unlocks engine features Ollama lacks, like speculative decoding:
+
+```bash
+# Point the loop at a llama-server running on the host
+INFERENCE_BACKEND=openai \
+INFERENCE_URL=http://host.docker.internal:8080/v1 \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+bash run-dgx-local.sh
+```
+
+See [DGX_SETUP.md](DGX_SETUP.md#alternative-inference-backends-llama-server-vllm-ds4) for details.
+
 ## Full Autonomous Agent
 
 Run the full agent loop with Claude Code (best for frontier API models or highly capable local models):
