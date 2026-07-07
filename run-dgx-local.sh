@@ -20,6 +20,12 @@
 #   OLLAMA_KEEP_ALIVE Model unload delay after last request (default: 0, unload immediately)
 #   OLLAMA_GGUF       Host path to a local GGUF file to import instead of pulling
 #   OLLAMA_NUM_CTX    Context window for imported GGUF models (default: 32768)
+#   INFERENCE_BACKEND ollama (default) or openai — set to openai to use an
+#                     external OpenAI-compatible server (llama-server, vLLM,
+#                     ds4) instead of in-container Ollama, e.g. for engines
+#                     with speculative decoding support
+#   INFERENCE_URL     Base URL of the external server as seen from inside the
+#                     container (e.g. http://host.docker.internal:8080/v1)
 
 set -euo pipefail
 
@@ -32,6 +38,8 @@ SHM_SIZE="${SHM_SIZE:-64gb}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 OLLAMA_GGUF="${OLLAMA_GGUF:-}"
 OLLAMA_NUM_CTX="${OLLAMA_NUM_CTX:-32768}"
+INFERENCE_BACKEND="${INFERENCE_BACKEND:-ollama}"
+INFERENCE_URL="${INFERENCE_URL:-}"
 CONTAINER_NAME="autoresearch-dgx-local-hyp"
 MAX_EXPERIMENTS=50
 
@@ -59,6 +67,14 @@ while [[ $# -gt 0 ]]; do
             echo "  OLLAMA_KEEP_ALIVE  Model unload delay (default: 0 = unload immediately)"
             echo "  OLLAMA_GGUF      Path to a local GGUF file to import instead of pulling"
             echo "  OLLAMA_NUM_CTX   Context window for imported GGUF (default: 32768)"
+            echo "  INFERENCE_BACKEND  ollama (default) or openai — use an external"
+            echo "                     OpenAI-compatible server instead of in-container Ollama"
+            echo "  INFERENCE_URL      External server URL as seen from the container"
+            echo "                     (e.g. http://host.docker.internal:8080/v1)"
+            echo ""
+            echo "External backend example (llama-server with speculative decoding):"
+            echo "  INFERENCE_BACKEND=openai INFERENCE_URL=http://host.docker.internal:8080/v1 \\"
+            echo "      bash run-dgx-local.sh"
             echo ""
             echo "Tested models:"
             echo "  qwen3.6:27b          ~18GB  Strong code reasoning (default)"
@@ -117,6 +133,7 @@ mkdir -p "$OLLAMA_MODELS"
 
 echo "Configuration:"
 echo "  Mode:             hypothesis generator (deterministic loop)"
+echo "  Backend:          $INFERENCE_BACKEND${INFERENCE_URL:+ ($INFERENCE_URL)}"
 echo "  LLM model:        $OLLAMA_MODEL"
 [ -n "$OLLAMA_GGUF" ] && echo "  Custom GGUF:      $OLLAMA_GGUF (num_ctx=$OLLAMA_NUM_CTX)"
 echo "  Docker image:     $DOCKER_IMAGE"
@@ -150,56 +167,73 @@ else
     echo "[1/3] Installing Python dependencies..."
     pip install -q rustbpe huggingface_hub tiktoken pyarrow requests
 
-    echo "[2/3] Installing Ollama..."
-    if ! command -v ollama &>/dev/null; then
-        apt-get update -qq && apt-get install -y -qq zstd >/dev/null 2>&1
-        curl -fsSL https://ollama.com/install.sh | sh
+    if [ "${INFERENCE_BACKEND:-ollama}" = "ollama" ]; then
+        echo "[2/3] Installing Ollama..."
+        if ! command -v ollama &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq zstd >/dev/null 2>&1
+            curl -fsSL https://ollama.com/install.sh | sh
+        fi
+    else
+        echo "[2/3] External backend ($INFERENCE_BACKEND) — skipping Ollama install"
     fi
 
-    echo "[3/3] No Claude Code needed — hypothesis generator uses raw Ollama API"
+    echo "[3/3] No Claude Code needed — hypothesis generator uses raw API calls"
 fi
 
-# Start Ollama server
-echo "[start] Starting Ollama server (keep-alive: ${OLLAMA_KEEP_ALIVE:-0})..."
-export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
-ollama serve &>/dev/null &
-OLLAMA_PID=$!
-sleep 3
+if [ "${INFERENCE_BACKEND:-ollama}" = "ollama" ]; then
+    # Start Ollama server
+    echo "[start] Starting Ollama server (keep-alive: ${OLLAMA_KEEP_ALIVE:-0})..."
+    export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+    ollama serve &>/dev/null &
+    OLLAMA_PID=$!
+    sleep 3
 
-# Wait for Ollama to be ready
-for i in $(seq 1 30); do
-    if curl -s http://localhost:11434/api/tags &>/dev/null; then
-        echo "  Ollama server ready."
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "ERROR: Ollama server failed to start."
-        exit 1
-    fi
-    sleep 1
-done
+    # Wait for Ollama to be ready
+    for i in $(seq 1 30); do
+        if curl -s http://localhost:11434/api/tags &>/dev/null; then
+            echo "  Ollama server ready."
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "ERROR: Ollama server failed to start."
+            exit 1
+        fi
+        sleep 1
+    done
 
-# Pull or import the model
-if [ -n "${OLLAMA_GGUF_FILE:-}" ]; then
-    # Custom GGUF import — one-time cost, model store is a persistent mount
-    if ollama show "$OLLAMA_MODEL" &>/dev/null; then
-        echo "[start] Custom model already imported: $OLLAMA_MODEL"
-    else
-        echo "[start] Importing GGUF as $OLLAMA_MODEL (num_ctx=${OLLAMA_NUM_CTX:-32768})..."
-        echo "        Large files take several minutes to hash on first import."
-        ollama create "$OLLAMA_MODEL" -f /dev/stdin <<GGUFMODELFILE
+    # Pull or import the model
+    if [ -n "${OLLAMA_GGUF_FILE:-}" ]; then
+        # Custom GGUF import — one-time cost, model store is a persistent mount
+        if ollama show "$OLLAMA_MODEL" &>/dev/null; then
+            echo "[start] Custom model already imported: $OLLAMA_MODEL"
+        else
+            echo "[start] Importing GGUF as $OLLAMA_MODEL (num_ctx=${OLLAMA_NUM_CTX:-32768})..."
+            echo "        Large files take several minutes to hash on first import."
+            ollama create "$OLLAMA_MODEL" -f /dev/stdin <<GGUFMODELFILE
 FROM $OLLAMA_GGUF_FILE
 PARAMETER num_ctx ${OLLAMA_NUM_CTX:-32768}
 GGUFMODELFILE
+        fi
+    else
+        echo "[start] Pulling model: $OLLAMA_MODEL ..."
+        ollama pull "$OLLAMA_MODEL"
     fi
+    BACKEND_DESC="Ollama (http://localhost:11434)"
 else
-    echo "[start] Pulling model: $OLLAMA_MODEL ..."
-    ollama pull "$OLLAMA_MODEL"
+    # External OpenAI-compatible server (llama-server, vLLM, ds4).
+    # The server manages its own model loading — we just verify it's up.
+    echo "[start] Using external $INFERENCE_BACKEND backend: $INFERENCE_URL"
+    if ! curl -s "${INFERENCE_URL%/}/models" &>/dev/null; then
+        echo "WARNING: No response from $INFERENCE_URL — proceeding anyway."
+        echo "  (From inside the container, a host server is usually"
+        echo "   http://host.docker.internal:<port>/v1)"
+    fi
+    BACKEND_DESC="$INFERENCE_BACKEND ($INFERENCE_URL)"
 fi
 
 echo ""
 echo "=== Environment ready ==="
-echo "  Ollama:  http://localhost:11434"
+echo "  Backend: $BACKEND_DESC"
 echo "  Model:   $OLLAMA_MODEL"
 echo ""
 
@@ -521,6 +555,9 @@ docker run -it --rm \
     -v "$SHARD_CACHE_DIR":/cache/autoresearch \
     -v "$OLLAMA_MODELS":/root/.ollama/models \
     ${GGUF_ARGS[@]+"${GGUF_ARGS[@]}"} \
+    --add-host=host.docker.internal:host-gateway \
+    -e INFERENCE_BACKEND="$INFERENCE_BACKEND" \
+    -e INFERENCE_URL="$INFERENCE_URL" \
     -e AUTORESEARCH_CACHE_DIR=/cache/autoresearch \
     -e OLLAMA_MODEL="$OLLAMA_MODEL" \
     -e OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
