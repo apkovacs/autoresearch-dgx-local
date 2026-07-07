@@ -112,6 +112,19 @@ bash benchmark/run-bench.sh edit-quality --models deepseek-v4-flash-dwarf --tria
 
 The file is mounted read-only and imported via `ollama create` with `OLLAMA_NUM_CTX` (default 32768) as the context window. The import is a one-time cost — the model store is a persistent mount, so later runs skip it.
 
+## Alternative Inference Backends
+
+The `ollama_raw` adapter (and `hypothesis_generator.py` behind it) can target any OpenAI-compatible server instead of Ollama — llama-server, vLLM, or ds4. This is the integration point for engines with capabilities Ollama lacks, such as speculative decoding (`llama-server --draft-model`, DSpark):
+
+```bash
+# Benchmark against an external llama-server running on the host
+INFERENCE_BACKEND=openai \
+INFERENCE_URL=http://host.docker.internal:8080/v1 \
+bash benchmark/run-bench.sh edit-quality --models deepseek-v4-flash-dwarf --trials 5
+```
+
+With `INFERENCE_BACKEND=openai`, requests go to `{INFERENCE_URL}/chat/completions` with `response_format: json_object` (the OpenAI equivalent of Ollama's `format: json`). Same edit-quality metrics, so Ollama vs. llama-server vs. speculative-decoding configurations can be compared apples-to-apples — e.g. verifying that a draft model changes latency but not edit quality.
+
 ## Dashboard
 
 Generate an HTML dashboard from benchmark results:

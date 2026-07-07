@@ -1,11 +1,16 @@
-"""Raw Ollama API adapter — hypothesis generator pattern.
+"""Raw API adapter — hypothesis generator pattern.
 
-Uses hypothesis_generator.py to propose and apply edits via direct Ollama
-API calls with JSON schema constraints. No agent framework needed.
+Uses hypothesis_generator.py to propose and apply edits via direct API
+calls with JSON schema constraints. No agent framework needed.
+
+Backend-agnostic: defaults to Ollama, but INFERENCE_BACKEND=openai (with
+INFERENCE_URL) targets any OpenAI-compatible server — llama-server, vLLM,
+ds4 — including engines with speculative decoding that Ollama lacks.
 """
 
 import difflib
 import json
+import os
 import py_compile
 import subprocess
 import sys
@@ -21,8 +26,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 class OllamaRawAdapter(HarnessAdapter):
     name = "ollama_raw"
 
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str = "http://localhost:11434",
+                 backend: str | None = None, url: str | None = None):
+        self.backend = backend or os.environ.get("INFERENCE_BACKEND", "ollama")
+        self.url = url or os.environ.get("INFERENCE_URL") or (
+            ollama_url if self.backend == "ollama" else "http://localhost:8080/v1"
+        )
+        # Back-compat attribute (bench_edit_quality.py error message uses it)
+        self.ollama_url = self.url
 
     def propose_and_apply(self, workdir: Path, model: str,
                           results_tsv: Path | None = None) -> EditResult:
@@ -37,7 +48,8 @@ class OllamaRawAdapter(HarnessAdapter):
             sys.executable, str(REPO_ROOT / "hypothesis_generator.py"),
             "propose",
             "--model", model,
-            "--ollama-url", self.ollama_url,
+            "--backend", self.backend,
+            "--url", self.url,
             "--train-py", str(train_py),
             "--results", results_path,
             "--retries", "1",
@@ -149,7 +161,11 @@ class OllamaRawAdapter(HarnessAdapter):
     def is_available(self) -> bool:
         try:
             import requests
-            resp = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if self.backend == "openai":
+                probe = f"{self.url.rstrip('/')}/models"
+            else:
+                probe = f"{self.url}/api/tags"
+            resp = requests.get(probe, timeout=5)
             return resp.status_code == 200
         except Exception:
             return False

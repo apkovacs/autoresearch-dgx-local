@@ -1,24 +1,44 @@
 """
 Hypothesis generator for autoresearch experiment loop.
 
-Builds a prompt from train.py + results history, calls Ollama API for a
-structured edit proposal, and applies edits to train.py. Designed to be
-called from a deterministic bash loop (run-dgx-local.sh) — no agent
-framework needed.
+Builds a prompt from train.py + results history, calls an inference
+backend for a structured edit proposal, and applies edits to train.py.
+Designed to be called from a deterministic bash loop (run-dgx-local.sh)
+— no agent framework needed.
+
+Backends:
+    ollama  — Ollama's native /api/chat with format=json (default)
+    openai  — any OpenAI-compatible /chat/completions endpoint
+              (llama-server, vLLM, ds4, ...) with response_format
+              json_object. This is the integration point for engines
+              with capabilities Ollama lacks, e.g. speculative decoding
+              (llama-server --draft-model, DSpark).
 
 Usage:
     python3 hypothesis_generator.py propose --model qwen3.6:27b
+    python3 hypothesis_generator.py propose --backend openai \
+        --url http://localhost:8080/v1 --model deepseek-v4-flash-dwarf
     python3 hypothesis_generator.py apply --edits-json '{"description":"...","edits":[...]}'
+
+Environment variables (CLI flags take precedence):
+    INFERENCE_BACKEND   ollama | openai
+    INFERENCE_URL       backend base URL
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
 from pathlib import Path
 
 import requests
+
+BACKEND_DEFAULT_URLS = {
+    "ollama": "http://localhost:11434",
+    "openai": "http://localhost:8080/v1",
+}
 
 # ---------------------------------------------------------------------------
 # System prompt — distilled from program.md
@@ -134,7 +154,7 @@ def build_user_prompt(train_py_path: str, results_path: str, max_results: int = 
 
 
 # ---------------------------------------------------------------------------
-# Ollama API
+# Inference backends
 # ---------------------------------------------------------------------------
 
 def call_ollama(model: str, system_prompt: str, user_prompt: str,
@@ -171,6 +191,62 @@ def call_ollama(model: str, system_prompt: str, user_prompt: str,
         "elapsed_s": elapsed,
         "tokens_generated": eval_count,
     }
+
+
+def call_openai_compat(model: str, system_prompt: str, user_prompt: str,
+                       base_url: str = "http://localhost:8080/v1",
+                       num_predict: int = 4096, temperature: float = 0.7) -> dict:
+    """Call an OpenAI-compatible /chat/completions endpoint.
+
+    Works with llama-server, vLLM, and other OpenAI-compatible servers.
+    Uses response_format json_object to constrain output to valid JSON
+    (the equivalent of Ollama's format=json).
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "stream": False,
+        "max_tokens": num_predict,
+        "temperature": temperature,
+    }
+    t0 = time.time()
+    resp = requests.post(url, json=payload, timeout=300)
+    elapsed = time.time() - t0
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"OpenAI-compat API error {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"OpenAI-compat API returned no choices: {json.dumps(data)[:200]}")
+    content = (choices[0].get("message") or {}).get("content", "")
+    usage = data.get("usage") or {}
+
+    return {
+        "content": content,
+        "elapsed_s": elapsed,
+        "tokens_generated": usage.get("completion_tokens", 0) or 0,
+    }
+
+
+def call_backend(backend: str, model: str, system_prompt: str, user_prompt: str,
+                 url: str, num_predict: int, temperature: float) -> dict:
+    """Dispatch to the selected inference backend."""
+    if backend == "ollama":
+        return call_ollama(model, system_prompt, user_prompt,
+                           ollama_url=url, num_predict=num_predict,
+                           temperature=temperature)
+    if backend == "openai":
+        return call_openai_compat(model, system_prompt, user_prompt,
+                                  base_url=url, num_predict=num_predict,
+                                  temperature=temperature)
+    raise ValueError(f"Unknown backend: {backend} (use 'ollama' or 'openai')")
 
 
 # ---------------------------------------------------------------------------
@@ -267,19 +343,30 @@ def apply_edits(train_py_path: str, edits: list) -> list:
 # ---------------------------------------------------------------------------
 
 def cmd_propose(args):
-    """Build prompt, call Ollama, validate response, print JSON to stdout."""
+    """Build prompt, call the inference backend, validate, print JSON to stdout."""
     user_prompt = build_user_prompt(args.train_py, args.results, args.max_results)
+
+    # Resolve backend + URL: CLI flag > env var > default.
+    # --ollama-url is kept as a back-compat alias for --url with the
+    # ollama backend (run-dgx-local.sh and older scripts pass it).
+    backend = args.backend or os.environ.get("INFERENCE_BACKEND", "ollama")
+    url = args.url or os.environ.get("INFERENCE_URL")
+    if not url and backend == "ollama":
+        url = args.ollama_url
+    if not url:
+        url = BACKEND_DEFAULT_URLS.get(backend)
 
     max_retries = args.retries
     last_error = None
 
     for attempt in range(1, max_retries + 1):
         try:
-            result = call_ollama(
+            result = call_backend(
+                backend=backend,
                 model=args.model,
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_prompt,
-                ollama_url=args.ollama_url,
+                url=url,
                 num_predict=args.num_predict,
                 temperature=args.temperature,
             )
@@ -287,6 +374,7 @@ def cmd_propose(args):
             # Add metadata
             validated["_meta"] = {
                 "model": args.model,
+                "backend": backend,
                 "elapsed_s": round(result["elapsed_s"], 1),
                 "tokens_generated": result["tokens_generated"],
                 "attempt": attempt,
@@ -344,9 +432,17 @@ def main():
     # propose
     p_propose = sub.add_parser("propose", help="Propose an edit to train.py")
     p_propose.add_argument("--model", default="qwen3.6:27b",
-                           help="Ollama model name (default: qwen3.6:27b)")
+                           help="Model name (default: qwen3.6:27b)")
+    p_propose.add_argument("--backend", choices=["ollama", "openai"], default=None,
+                           help="Inference backend (default: $INFERENCE_BACKEND or ollama). "
+                                "'openai' works with any OpenAI-compatible server: "
+                                "llama-server, vLLM, ds4")
+    p_propose.add_argument("--url", default=None,
+                           help="Backend base URL (default: $INFERENCE_URL, or "
+                                "http://localhost:11434 for ollama / "
+                                "http://localhost:8080/v1 for openai)")
     p_propose.add_argument("--ollama-url", default="http://localhost:11434",
-                           help="Ollama API URL")
+                           help="Ollama API URL (back-compat alias for --url)")
     p_propose.add_argument("--train-py", default="train.py",
                            help="Path to train.py (default: train.py)")
     p_propose.add_argument("--results", default="results.tsv",

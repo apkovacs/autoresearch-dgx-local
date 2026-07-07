@@ -5,6 +5,16 @@ set -euo pipefail
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 export OLLAMA_KEEP_ALIVE
 
+# External OpenAI-compatible backend (llama-server, vLLM, ds4): the server
+# manages its own models — skip Ollama entirely and run the command directly.
+if [ "${INFERENCE_BACKEND:-ollama}" != "ollama" ]; then
+    echo "[bench] External backend: ${INFERENCE_BACKEND} (${INFERENCE_URL:-no URL set})"
+    echo "[bench] Skipping Ollama startup and model pulls."
+    echo "[bench] Running: $*"
+    echo ""
+    exec "$@"
+fi
+
 # Start Ollama server in background
 echo "[bench] Starting Ollama server (keep-alive: $OLLAMA_KEEP_ALIVE)..."
 ollama serve &>/dev/null &

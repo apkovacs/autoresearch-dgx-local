@@ -103,8 +103,11 @@ DOCKER_ARGS=(
     -v "$REPO_ROOT":/workspace
     -v "$OLLAMA_MODELS":/root/.ollama/models
     -v /var/run/docker.sock:/var/run/docker.sock
+    --add-host=host.docker.internal:host-gateway
     -e "OLLAMA_MODEL=$OLLAMA_MODEL"
     -e "OLLAMA_KEEP_ALIVE=0"
+    -e "INFERENCE_BACKEND=${INFERENCE_BACKEND:-ollama}"
+    -e "INFERENCE_URL=${INFERENCE_URL:-}"
 )
 
 if [ "$BENCH_GPU" = "1" ]; then
