@@ -1,6 +1,6 @@
 # autoresearch — DGX Spark Adaptation
 
-This branch adapts [karpathy/autoresearch](https://github.com/karpathy/autoresearch) to run on the NVIDIA DGX Spark desktop workstation.
+This branch adapts [karpathy/autoresearch](https://github.com/karpathy/autoresearch) to run on the NVIDIA DGX Spark desktop workstation — and extends it with three agent modes (hypothesis generator, guarded, minimal), custom GGUF model support, and a benchmark suite for measuring which mode a model qualifies for. See the [main README](README.md) for the full picture; this document focuses on the hardware adaptation.
 
 ## What Changed and Why
 
@@ -50,17 +50,30 @@ Set `SHARD_CACHE_DIR` to change the host path. See [DGX_SETUP.md](DGX_SETUP.md) 
 
 ## Local LLM Agent
 
-Two modes are available for running the experiment loop with local models:
+Three modes span the capability spectrum — the scaffolding shrinks as the model gets stronger:
 
 ```bash
-# Hypothesis generator (recommended) — LLM proposes edits, script handles everything else
+# Hypothesis generator — LLM proposes edits as JSON, script handles everything else
 bash run-dgx-local.sh                           # default: Qwen3.6 27B
 bash run-dgx-local.sh --max-experiments 100     # set experiment budget
 
-# Full agent — LLM drives the entire loop via Claude Code tool use
+# Guarded agent — full Claude Code loop with guardrails for local models
 bash run-dgx-agent.sh                           # default: Qwen3.6 27B
 OLLAMA_MODEL=gemma4:26b bash run-dgx-agent.sh   # alternative model
+
+# Minimal agent — Karpathy's original design, for highly capable models
+bash run-dgx-agent.sh --mode minimal
 ```
+
+Frontier-scale community quants that aren't in the Ollama library (e.g. DeepSeek V4 Flash "Dwarf Star", 284B MoE compressed to ~81 GB) can be imported from a local GGUF file:
+
+```bash
+OLLAMA_GGUF=~/models/deepseek-v4-flash-dwarf.gguf \
+OLLAMA_MODEL=deepseek-v4-flash-dwarf \
+bash run-dgx-agent.sh --mode minimal
+```
+
+Use the trace-quality benchmark (`bash benchmark/run-bench.sh trace`) to verify a model executes the loop cleanly enough for minimal mode.
 
 For faster startup, build a pre-built image that bakes in all dependencies:
 
